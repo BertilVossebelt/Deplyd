@@ -1,0 +1,24 @@
+name: Deploy production
+on:
+  workflow_dispatch:
+jobs:
+  deploy-api:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: echo build
+      - name: Ship
+        run: echo ship
+  deploy-web:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: echo build
+      - name: Ship
+        run: echo ship

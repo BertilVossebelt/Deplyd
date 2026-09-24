@@ -1,0 +1,6 @@
+{
+  "deployPattern": "zonk",
+  "environments": {
+    "production": { "workflows": ["zonk.yml"] }
+  }
+}

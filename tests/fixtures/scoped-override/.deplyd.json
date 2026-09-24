@@ -1,0 +1,6 @@
+{
+  "scopes": {
+    "API": ["services/api"],
+    "WEB": ["services/web"]
+  }
+}

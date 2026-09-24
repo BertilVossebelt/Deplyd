@@ -1,0 +1,11 @@
+name: Deploy Canary
+on:
+  workflow_dispatch:
+jobs:
+  ship:
+    runs-on: ubuntu-latest
+    environment: canary
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish
+        run: echo x

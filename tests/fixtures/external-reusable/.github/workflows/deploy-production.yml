@@ -1,0 +1,9 @@
+name: Deploy production
+on:
+  workflow_dispatch:
+jobs:
+  deploy:
+    uses: acme/shared-workflows/.github/workflows/deploy.yml@main
+    secrets: inherit
+    with:
+      environment: production

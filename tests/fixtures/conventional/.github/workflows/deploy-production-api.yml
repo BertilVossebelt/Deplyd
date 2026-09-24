@@ -1,0 +1,24 @@
+name: Deploy production API
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        type: string
+        default: production
+jobs:
+  deploy-api:
+    runs-on: ubuntu-latest
+    environment:
+      name: production-api
+      url: https://example.com
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Publish api
+        run: echo publishing
+      - name: Restart
+        run: echo restarting

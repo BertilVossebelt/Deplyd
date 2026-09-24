@@ -1,0 +1,32 @@
+{
+  "_comment": "Optional. Copy to .deplyd.json at your repo root only if `deplyd -ShowConfig` shows something wrong. Every key is optional; each one overrides a single detection step.",
+
+  "_deployPattern": "Regex matched against workflow filename and name to decide what counts as a deploy.",
+  "deployPattern": "deploy|release|publish|ship|\bcd\b",
+
+  "_environments": "Replaces the detected environment list. Give an environment a `workflows` array to pin its workflows explicitly; that always wins over detection.",
+  "environments": {
+    "production": { "workflows": ["deploy-production.yml"] },
+    "staging": {}
+  },
+
+  "_scopes": "Which paths each target covers, when the job sets no working-directory. Keyed by the label deplyd reports, which -ShowConfig will tell you.",
+  "scopes": {
+    "API": ["services/api"],
+    "WEB": ["services/web"]
+  },
+
+  "_ignoreJobs": "Substrings of job names that should never become targets.",
+  "ignoreJobs": [
+    "merge",
+    "environment",
+    "notify",
+    "trigger",
+    "lint",
+    "test",
+    "summary",
+    "setup",
+    "prepare",
+    "complete"
+  ]
+}

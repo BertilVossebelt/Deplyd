@@ -1,0 +1,17 @@
+name: Deploy staging web
+on:
+  workflow_dispatch:
+jobs:
+  deploy-web:
+    runs-on: ubuntu-latest
+    environment:
+      name: staging-web
+    defaults:
+      run:
+        working-directory: services/web
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish web
+        run: echo publishing
+      - name: Restart
+        run: echo restarting

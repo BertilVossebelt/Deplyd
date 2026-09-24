@@ -1,0 +1,22 @@
+name: Deploy
+on:
+  workflow_dispatch:
+jobs:
+  ship-canary:
+    runs-on: ubuntu-latest
+    environment: canary
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish
+        run: echo x
+      - name: Restart
+        run: echo x
+  ship-canary-eu:
+    runs-on: ubuntu-latest
+    environment: canary-eu
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish
+        run: echo x
+      - name: Restart
+        run: echo x
