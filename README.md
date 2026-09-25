@@ -298,10 +298,12 @@ there in preference when you do.
 
 - Deploys outside GitHub Actions are invisible. There is no run to read.
 - A pull request's age does not matter, but the newest deploy's does. Workflows that
-  deploy a branch input or call another workflow need that run's log, so a repository
-  that has not deployed within GitHub's retention has nothing left to read. Retention
-  defaults to 90 days, and is raised under Settings, Actions, General to 90 on public
-  repos or 400 on private ones.
+  deploy a branch input or call another workflow read that run's log, and GitHub
+  deletes logs after the retention period: 90 days by default, set under Settings,
+  Actions, General to at most 90 on public repos or 400 on private ones. Past that,
+  deplyd falls back to GitHub's deployment record, which is kept. The target is still
+  reported, marked `UNCERTAIN`, and says the commit came from the deployment record
+  rather than from the checkout step. Only a deploy with neither is unreadable.
 - One workflow serving several environments needs its jobs to declare `environment:`,
   because the API does not expose `workflow_dispatch` inputs.
 - Each leg of a matrix job becomes its own target, labelled by its matrix values.
