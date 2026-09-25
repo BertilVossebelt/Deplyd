@@ -45,9 +45,11 @@ merge commit 9f8e7d6c5
 
 The installer adds a `deplyd` function to your PowerShell profile so you can run it from
 anywhere, with tab completion for the commands and `dp` as a short form, and
-`uninstall.ps1` takes it out again. It also checks for the
-[GitHub CLI](https://cli.github.com/), which deplyd uses to read from GitHub, and offers
-to install and sign you in if it is missing.
+`uninstall.ps1` takes it out again. It also looks for the
+[GitHub CLI](https://cli.github.com/), which deplyd uses to read from GitHub, offers to
+install it if it is missing, and offers to sign you in if you are not. Skip that and
+the first `deplyd status` stops with the same instruction, `gh auth login`, rather
+than reporting on nothing.
 
 **Windows**
 

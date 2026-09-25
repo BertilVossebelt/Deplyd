@@ -122,6 +122,19 @@ function Invoke-ReadOnly {
     } finally {
         $ErrorActionPreference = $previousPreference
     }
+
+    # gh exits 4 when it has no credentials, and for nothing else. Callers treat any
+    # failure as "no answer" and carry on, so left alone a missing sign-in surfaces as
+    # one complaint per API call and then a report about nothing.
+    if ($Command -eq 'gh' -and $LASTEXITCODE -eq 4) { Stop-NotSignedIn }
+}
+
+function Stop-NotSignedIn {
+    Stop-WithMessage -Message 'Not signed in to GitHub, so nothing can be read from it.' -Hints @(
+        'Sign in with:  gh auth login',
+        'or put a token that can read this repository in GH_TOKEN.',
+        'deplyd does not sign in for you: it only reads.'
+    )
 }
 
 # Captured while this file is dot-sourced, when $PSScriptRoot is still lib/. Never use

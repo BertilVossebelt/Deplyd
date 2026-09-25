@@ -1031,6 +1031,60 @@ function Test-LocationPreserved {
     }
 }
 
+function Test-SignInGuard {
+    param([string] $Name)
+
+    # A gh that answers every call with exit code 4, which is what the real one does
+    # when nobody has signed in. It sits first on PATH for the child shell only, so
+    # nothing here can reach GitHub whether or not a real gh is installed.
+    $fakeBin = Join-Path $tempRoot ('fake-gh-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    New-Item -ItemType Directory -Path $fakeBin -Force | Out-Null
+    $complaint = 'To get started with GitHub CLI, please run:  gh auth login'
+    if ($null -eq $PSVersionTable.Platform -or $PSVersionTable.Platform -eq 'Win32NT') {
+        Set-Content -Path (Join-Path $fakeBin 'gh.cmd') -Value @("@echo $complaint 1>&2", '@exit /b 4') -Encoding ascii
+    } else {
+        $script = Join-Path $fakeBin 'gh'
+        Set-Content -Path $script -Value @('#!/bin/sh', "echo '$complaint' >&2", 'exit 4') -Encoding ascii
+        chmod +x $script
+    }
+
+    $repo = New-FixtureRepo -Fixture 'conventional'
+    $arguments = $script:shellArguments + @('-File', $toolPath, 'status', '-E', 'production', '-RepoPath', $repo, '-Author', 'Fixture Author')
+
+    $previousPath = $env:PATH
+    $previousPreference = $ErrorActionPreference
+    $env:PATH = $fakeBin + [System.IO.Path]::PathSeparator + $env:PATH
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = (& $script:shellPath @arguments 2>&1 | Out-String)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $env:PATH = $previousPath
+        $ErrorActionPreference = $previousPreference
+    }
+
+    $problems = @()
+    if ($exitCode -eq 0) { $problems += 'expected a non-zero exit code' }
+    if ($output -notmatch 'Not signed in to GitHub') { $problems += "missing 'Not signed in to GitHub'" }
+    if ($output -notmatch 'gh auth login') { $problems += "missing 'gh auth login'" }
+    if ($output -match 'No successful') { $problems += 'went on to report about nothing' }
+    $complaints = [regex]::Matches($output, 'please run').Count
+    if ($complaints -gt 1) { $problems += "gh complained $complaints times; it should be stopped after the first" }
+
+    if ($problems.Count -eq 0) {
+        Write-Host ('  PASS  ' + (Format-TestGroup 'sign-in') + $Name) -ForegroundColor Green
+        $script:passed++
+    } else {
+        Write-Host ('  FAIL  ' + (Format-TestGroup 'sign-in') + $Name) -ForegroundColor Red
+        foreach ($problem in $problems) { Write-Host "          $problem" -ForegroundColor Red }
+        Write-Host '        --- output ---' -ForegroundColor DarkGray
+        foreach ($line in ($output -split "`r?`n")) {
+            if ($line.Trim()) { Write-Host "        $line" -ForegroundColor DarkGray }
+        }
+        $script:failed++
+    }
+}
+
 function Test-FetchOnGuess {
     param([string] $Name, [string[]] $Log, [bool] $ExpectFetch)
 
@@ -1456,6 +1510,8 @@ Test-JobEnvironmentMap -Name 'a calling job contributes no environment' -Yaml $c
 
 Test-LocationPreserved -Name 'a full run leaves the caller where it was' -Arguments @('config')
 Test-LocationPreserved -Name 'an early exit leaves the caller where it was' -Arguments @('help')
+
+Test-SignInGuard -Name 'a missing sign-in stops the run with one message, not a complaint per call'
 
 # A pinned action SHA and a cache key are 40-hex but are not commits in this repo.
 $noisyLog = @(
