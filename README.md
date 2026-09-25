@@ -207,10 +207,6 @@ means the branch moved mid-deploy, so deplyd says so rather than picking a winne
 deployment record also outlives the log, which GitHub deletes after the retention
 period, so it is the last source left for an older deploy.
 
-Neither costs an extra API call on the ordinary path: the record is read when an
-environment had to be matched anyway, and fetched only when the commit is already a
-guess or the log is gone.
-
 ## Adapting it to your repo
 
 GitHub Actions is flexible enough that detection will not always land. Run
