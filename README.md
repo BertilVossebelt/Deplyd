@@ -66,9 +66,18 @@ git clone https://github.com/BertilVossebelt/Deplyd.git
 cd deplyd && cargo install --path crates/deplyd
 ```
 
-Working on deplyd itself, `./dev-install.sh` and `.\dev-install.ps1` build the tree
-and stage that build where the installer would put it, so a change can be tried on
-PATH without cutting a release. `--revert` takes it back off. They are not the
+Working on deplyd itself, dot-source `dev-install.sh`, or `dev-install.ps1` on
+Windows. It builds the tree and puts that build on PATH for the current terminal
+only, so a change can be tried without cutting a release and nothing outlives the
+window:
+
+```bash
+. ./dev-install.sh
+```
+
+The dot matters: a script cannot change the PATH of the shell that ran it. Add
+`--persist` to install the build the way the installer would, for when the thing
+being changed is the installer itself, and `--revert` to undo that. Neither is the
 installer: that one only ever takes a published release.
 
 Then open a new terminal, and from inside any repo:
