@@ -15,30 +15,30 @@ no authority over the deploy workflows, no pipeline step you are allowed to add.
 Everything it reports is recovered from what GitHub already exposes. It installs nothing
 into your repository and only ever reads it.
 
-```powershell
+```
 $ deplyd pr 412
 Inspecting production deploys...
 
-API (production)
-  a1b2c3d4e  2026-05-14 11:02:37 +0200  Merge pull request #418 from acme/release
-  run 10234567890 - https://github.com/acme/widgets/actions/runs/10234567890
-  scope services/api
-  DEPLYD: built and released, no newer deploy failing or in flight
+production  ·  2 targets
 
-WEB (production)
-  4d5e6f7a8  2026-05-12 16:41:09 +0200  Merge pull request #401 from acme/release
-  run 10221004455 - https://github.com/acme/widgets/actions/runs/10221004455
-  scope services/web
-  SKIPPED (1) - changes to these are not deployd:
-    Deploy web bundle
-  UNCERTAIN: a newer deploy did not complete
-    run 10234599887  failed
+  API  services/api
+  ✓ DEPLYD     a1b2c3d  2026-05-14 11:02  Merge pull request #418 from BertilVossebelt/release
+    run        10234567890
+
+  WEB  services/web
+  ! UNCERTAIN  4d5e6f7  2026-05-12 16:41  Merge pull request #401 from BertilVossebelt/release
+    because    run 10234599887 failed
+    run        10221004455
+    skipped    Deploy web bundle
 
 PR #412  feat(billing): add invoice export endpoint
-merge commit 9f8e7d6c5
-  API       DEPLYD in a1b2c3d4e
-  WEB       NOT DEPLYD - deployed commit is 4d5e6f7a8
+  merge      9f8e7d6
+
+  API       ✓ DEPLYD       in a1b2c3d
+  WEB       ✗ NOT DEPLYD   deployed 4d5e6f7
 ```
+
+Commit SHAs and run numbers are links where the terminal supports them.
 
 ## Install
 
@@ -95,28 +95,31 @@ cd deplyd && cargo install --path crates/deplyd
 
 Run it from inside any repo.
 
-| Command                 |                                                       |
-|-------------------------|-------------------------------------------------------|
-| `deplyd status`         | the last deployed commit, and your changes in it      |
-| `deplyd pr 412`         | is that pull request live?                            |
-| `deplyd commit a1b2c3d` | is that commit live? takes any ref, including `HEAD`  |
-| `deplyd environments`   | environments that `-E` accepts                        |
-| `deplyd authors`        | names that `-A` accepts                               |
-| `deplyd config`         | what detection concluded about this repo              |
-| `deplyd init`           | write that conclusion to a file you can correct       |
-| `deplyd check`          | prove it can only read                                |
+| Command                 |                                                      |
+|-------------------------|------------------------------------------------------|
+| `deplyd status`         | the last deployed commit, and your changes in it     |
+| `deplyd pr 412`         | is that pull request live?                           |
+| `deplyd commit a1b2c3d` | is that commit live? takes any ref, including `HEAD` |
+| `deplyd environments`   | environments that `-E` accepts                       |
+| `deplyd authors`        | names that `-A` accepts                              |
+| `deplyd config`         | what detection concluded about this repo             |
+| `deplyd init`           | write that conclusion to a file you can correct      |
+| `deplyd remember`       | keep a default author, environment or repo           |
+| `deplyd completions`    | shell completion scripts                             |
+| `deplyd check`          | prove it can only read                               |
 
 Commands shorten while they stay unambiguous, so `deplyd env` and `deplyd auth` work,
 and tab completion fills in environments and authors from what the repo actually has.
 
-| Option              |                                                  |
-|---------------------|--------------------------------------------------|
-| `-E <env>`          | environment, or a prefix: `-E prod`, `-E stag`   |
-| `-A <name>`         | author, default `git config user.name`           |
-| `-T <n>` / `-S <n>` | how many changes to list, and how many to skip   |
-| `--repo-path <p>`   | repo to inspect, default the current directory   |
-| `--json`            | machine-readable output, for the verdicts        |
-| `--force`           | let `init` rewrite a file that already exists    |
+| Option                    |                                                |
+|---------------------------|------------------------------------------------|
+| `-E, --environment <env>` | environment, or a prefix: `-E prod`, `-E stag` |
+| `-A, --author <name>`     | author, default `git config user.name`         |
+| `-T, --take <n>`          | how many changes to list, default 10           |
+| `-S, --skip <n>`          | skip this many, for paging                     |
+| `--repo-path <path>`      | repo to inspect, default the current directory |
+| `-J, --json`              | machine-readable output, for `status` and `pr` |
+| `-F, --force`             | let `init` rewrite a file that already exists  |
 
 Defaults can be kept:
 
@@ -135,15 +138,15 @@ so a release gate is one line:
 deplyd pr 412 -E production --json > verdict.json || echo "do not ship"
 ```
 
-| Exit |                                                              |
-|------|--------------------------------------------------------------|
-| `0`  | deployd, on evidence with nothing shaky about it             |
-| `2`  | not deployd, including a change no target covers             |
-| `3`  | reverted                                                     |
-| `4`  | not merged                                                   |
-| `5`  | no such pull request, or no access to it                     |
-| `6`  | deployd, but a target is `UNCERTAIN`: read the report first  |
-| `1`  | deplyd could not run                                         |
+| Exit |                                                            |
+|------|------------------------------------------------------------|
+| `0`  | deplyd, on evidence with nothing shaky about it            |
+| `2`  | not deplyd, including a change no target covers            |
+| `3`  | reverted                                                   |
+| `4`  | not merged                                                 |
+| `5`  | no such pull request, or no access to it                   |
+| `6`  | deplyd, but a target is `UNCERTAIN`: read the report first |
+| `1`  | deplyd could not run                                       |
 
 `0` is the only code meaning "in what shipped, and the reading is sound". `6` exists so
 a gate is never told *shipped* on evidence deplyd has itself questioned: the change is
@@ -157,22 +160,23 @@ answer at all.
 
 Per target:
 
-|             |                                                                          |
-|-------------|--------------------------------------------------------------------------|
-| `DEPLYD`    | built and released, with no newer deploy failing or in flight            |
+|             |                                                                           |
+|-------------|---------------------------------------------------------------------------|
+| `DEPLYD`    | built and released, with no newer deploy failing or in flight             |
 | `UNCERTAIN` | a newer deploy did not complete, or the commit could not be read reliably |
-| `SKIPPED`   | steps the run skipped. Changes to those are not live                    |
+| `because`   | what made it uncertain: the run that failed, or the reading that did not hold |
+| `skipped`   | steps the run skipped. Changes to those are not live                     |
 
 Per change:
 
-|                              |                                                       |
-|------------------------------|-------------------------------------------------------|
-| `DEPLYD in <sha>`            | it is in the deployed commit                          |
-| `DEPLYD in <sha> as <other>` | the commit is absent but the same change is there, cherry-picked or rebased |
-| `REVERTED`                   | it shipped, then was undone before the deployed commit |
-| `NOT DEPLYD`                 | neither the commit nor an equivalent change is there   |
-| `NOT MERGED`                 | still open, or closed without merging                  |
-| `NOT COVERED`                | it changed no path any target covers. Lists every target and what it covers, since a wrong scope looks identical to an unrelated change |
+|                                |                                                       |
+|--------------------------------|-------------------------------------------------------|
+| `DEPLYD in <sha>`              | it is in the deployed commit                          |
+| `DEPLYD in <sha> as a copy`    | the commit is absent but the same change is there, cherry-picked or rebased |
+| `REVERTED undone before <sha>` | it shipped, then was undone before the deployed commit |
+| `NOT DEPLYD deployed <sha>`    | neither the commit nor an equivalent change is there  |
+| `NOT MERGED`                   | still open, or closed without merging                 |
+| `NOT COVERED`                  | it changed no path any target covers. Lists every target and what it covers, since a wrong scope looks identical to an unrelated change |
 
 `DEPLYD` means the code was built and the deploy ran to completion. Nothing outside the
 server can prove the process actually cycled, which is why it is not `VERIFIED`.
@@ -215,6 +219,9 @@ The file stays out of your working tree. To share the fixes, move it to the repo
 | `ignoreJobs`                    | a job showing up as a target that should not        |
 | `scopes`                        | which paths a target covers. Keyed by the label deplyd reports |
 
+A file that will not parse stops the run and gets named. Carrying on without it would
+silently drop the corrections it exists to hold.
+
 ### What detection looks for
 
 Useful for reading `deplyd config`, and for telling which key to set. None of it is a
@@ -226,6 +233,9 @@ requirement.
 | an environment     | the name appears in the filename, in a job's `environment:`, or in a `workflow_dispatch` choice input |
 | a target           | a job that is not plumbing, with at least three steps. Names containing `merge`, `notify`, `lint`, `test`, `setup` and similar are skipped |
 | that target's scope | the job's `defaults.run.working-directory`; or a directory all its steps agree on; or the workflow's own `paths:` trigger filter |
+
+Those words match whole words only, so a job called `deploy-latest` is not read as a
+test job.
 
 A job's name becomes its label, so `deploy-api` reports as `API`.
 
@@ -244,17 +254,29 @@ refused before anything runs. And because a compiled binary cannot audit the sou
 came from, every invocation exercises its own refusal paths first. A build whose guard
 has been weakened refuses to read a repository at all.
 
-```powershell
+```
 $ deplyd check
-  git verbs           PASS  13 allowed, none of them write
+
+deplyd read-only self-check
+
+  git verbs           PASS  13 allowed, none of them write: rev-parse, rev-list, log, show, merge-base, shortlog, cat-file, diff, status, cherry, ls-files, config, fetch
   write refusals      PASS  8 of 8 refused
   reads still work    PASS  5 of 5 allowed
   github routes       PASS  6 routes, all GET, all inside the repo
+
+  writes on disk      only inside ~/.config/deplyd
+                      remembered defaults, and what deplyd init scaffolds
+  the one git write   fetch, which updates your own remote-tracking refs
+                      nothing is sent, and a fetch cannot change a remote
+
+  These ran just now, against the code compiled into this binary,
+  not against source sitting beside it.
 ```
 
 The one write against your repository is `git fetch`, which updates your own
 remote-tracking refs. Nothing is sent to GitHub. Everything else deplyd writes goes in
-its own directory, which `deplyd check` prints.
+its own directory, which `deplyd check` prints: remembered defaults, what `init`
+scaffolds, and a cache of runs that have already finished.
 
 This stops accidents, not someone determined to get around them. It also says nothing
 about dependencies, which run with the same permissions deplyd does.
