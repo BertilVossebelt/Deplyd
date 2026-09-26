@@ -225,13 +225,13 @@ fn an_author_name_is_a_name_not_a_pattern() {
     sandbox.commit("a.txt", "one", "a change");
 
     let repo = deplyd_core::repo::Repo::discover(&sandbox.path()).expect("repo");
-    let found = deplyd_core::report::records(&repo, &["HEAD"], &[], "API", "Ada Lovelace")
+    let found = deplyd_core::report::records(&repo, &["HEAD"], &[], "API", Some("Ada Lovelace"))
         .expect("an author was given");
     assert_eq!(found.len(), 1, "the ordinary case still works");
 
     // The awkward names must not error, and must not match either.
     for name in ["Ada [Team]", "Ada (Work)", "Ada*", "Ada+B", "a|b"] {
-        let found = deplyd_core::report::records(&repo, &["HEAD"], &[], "API", name)
+        let found = deplyd_core::report::records(&repo, &["HEAD"], &[], "API", Some(name))
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(
             found.is_empty(),
@@ -247,7 +247,8 @@ fn a_literal_name_still_matches_as_a_substring() {
     let repo = deplyd_core::repo::Repo::discover(&sandbox.path()).expect("repo");
 
     // The README promises a first name is enough.
-    let found = deplyd_core::report::records(&repo, &["HEAD"], &[], "API", "Ada").expect("ok");
+    let found =
+        deplyd_core::report::records(&repo, &["HEAD"], &[], "API", Some("Ada")).expect("ok");
     assert_eq!(found.len(), 1);
 }
 
@@ -261,7 +262,7 @@ fn a_settings_file_that_will_not_parse_stops_rather_than_being_ignored() {
     let repo = deplyd_core::repo::Repo::discover(&sandbox.path()).expect("repo");
     let outcome = deplyd_core::context::Context::build(
         repo.root(),
-        "Ada".into(),
+        Some("Ada".into()),
         deplyd_core::settings::Settings::default(),
     );
     let Err(error) = outcome else {

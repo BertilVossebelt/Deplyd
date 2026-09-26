@@ -35,7 +35,7 @@ impl World {
     fn context(&self, environment: &str) -> Context {
         let mut context = Context::build(
             self.repo.root(),
-            "Ada Lovelace".to_string(),
+            Some("Ada Lovelace".to_string()),
             Settings::default(),
         )
         .expect("workflows should be readable");

@@ -72,6 +72,47 @@ Then open a new terminal, and from inside any repo:
 dp status
 ```
 
+## Updating
+
+Run the installer again. It replaces the binary where it already is, so there is no
+need to uninstall first:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1 | iex
+```
+
+`dp update` asks which release is newest, says whether this is it, and prints the
+line above for the machine you are on. Printing is all it does, for the same reason
+`dp uninstall` does: deplyd does not write outside its own config.
+
+## Uninstall
+
+The installer takes back what it put there, and nothing else.
+
+**macOS and Linux**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh -s -- --uninstall
+```
+
+**Windows**, where `iex` cannot pass a switch, so the script becomes a block first
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1))) -Uninstall
+```
+
+That removes the two binaries, the PATH entry and the completion block. It asks
+before removing the GitHub CLI, which was probably here first, and leaves your
+sign-in and any `.deplyd.json` where they are. Remembered defaults and the cache stay
+too: add `--purge`, or `-Purge`, to take those as well.
+
+`dp uninstall` prints the right line for the machine you are on. Printing it is all
+it does - deplyd does not delete, which is the point of `dp check`.
+
 ## Setup
 
 The installer does all of this. You only need it if you built from source, or said no
@@ -111,6 +152,8 @@ Run it from inside any repo.
 | `deplyd remember`       | keep a default author, environment or repo           |
 | `deplyd completions`    | shell completion scripts                             |
 | `deplyd check`          | prove it can only read                               |
+| `deplyd update`         | whether a newer release is out, and how to get it    |
+| `deplyd uninstall`      | how to remove deplyd from this machine               |
 
 `dp` is the same binary under a shorter name. Commands shorten too, while they stay
 unambiguous, so `dp env` and `dp auth` work.
@@ -119,8 +162,10 @@ unambiguous, so `dp env` and `dp auth` work.
 |---------------------------|------------------------------------------------|
 | `-E, --environment <env>` | environment, or a prefix: `-E prod`, `-E stag` |
 | `-A, --author <name>`     | author, default `git config user.name`         |
-| `-T, --take <n>`          | how many changes to list, default 10           |
+| `--anyone`                | every author, not just yours                   |
+| `-T, --take <n>`          | how many to list per list, default 10          |
 | `-S, --skip <n>`          | skip this many, for paging                     |
+| `-D, --depth <n>`         | how far back to read per target, default 200   |
 | `--repo-path <path>`      | repo to inspect, default the current directory |
 | `-J, --json`              | machine-readable output, for `status` and `pr` |
 | `-F, --force`             | let `init` rewrite a file that already exists  |
@@ -131,7 +176,12 @@ Defaults can be kept:
 deplyd remember author "Ada"
 deplyd remember environment staging
 deplyd remember repo /path/to/repo
+deplyd remember depth 500
 ```
+
+Depth is how far back each target is read. The default of 200 keeps a long history
+from being walked on every run; when it stops early the count is shown as `355+` and
+the report says so, rather than presenting a ceiling as a total.
 
 ## In a script
 
@@ -307,12 +357,51 @@ about dependencies, which run with the same permissions deplyd does.
 
 ## Development
 
+### Running:
+
+To try a change the way someone else would meet it, dot-source the dev installer. It
+builds the tree and puts that build on PATH for the current terminal, with completion,
+writing nothing to your profile or rc file. Close the terminal and nothing of it is
+left.
+
+**macOS and Linux**
+
+```bash
+. ./dev-install.sh
+```
+
+**Windows**
+
+```powershell
+. .\dev-install.ps1
+```
+
+The dot matters: a script cannot change the PATH of the shell that ran it.
+
+Each takes its own spelling of the same three options, one dash in PowerShell and two
+in sh:
+
+|                                               | sh          | PowerShell |
+|-----------------------------------------------|-------------|------------|
+| Build with the release profile                | `--release` | `-Release` |
+| Install it for real, to work on the installer | `--persist` | `-Persist` |
+| Undo a `--persist`                            | `--revert`  | `-Revert`  |
+
+A persistent one is what `install.sh --uninstall` and `install.ps1 -Uninstall` need
+something to remove. Neither dev installer is the installer: that one only ever takes
+a published release, and refuses anything it cannot verify.
+
+### Testing:
+
+Run the tests with:
 ```bash
 cargo test
 ```
 
 No GitHub account or network needed: fixture repositories are built with
 `GIT_ALLOW_PROTOCOL=file`, so git itself refuses ssh and https.
+
+### Releasing:
 
 Cutting a release is in [RELEASING.md](RELEASING.md).
 
