@@ -72,6 +72,30 @@ Then open a new terminal, and from inside any repo:
 dp status
 ```
 
+## Uninstall
+
+The installer takes back what it put there, and nothing else.
+
+**macOS and Linux**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh -s -- --uninstall
+```
+
+**Windows**, where `iex` cannot pass a switch, so the script becomes a block first
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1))) -Uninstall
+```
+
+That removes the two binaries, the PATH entry and the completion block. It asks
+before removing the GitHub CLI, which was probably here first, and leaves your
+sign-in and any `.deplyd.json` where they are. Remembered defaults and the cache stay
+too: add `--purge`, or `-Purge`, to take those as well.
+
+`dp uninstall` prints the right line for the machine you are on. Printing it is all
+it does - deplyd does not delete, which is the point of `dp check`.
+
 ## Setup
 
 The installer does all of this. You only need it if you built from source, or said no
