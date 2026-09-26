@@ -29,6 +29,10 @@ use render::Output;
 use term::WebBase;
 
 const GITHUB_API: &str = "https://api.github.com";
+/// Where deplyd itself is published, for the update check and the two signposts.
+const DEPLYD_OWNER: &str = "BertilVossebelt";
+const DEPLYD_NAME: &str = "Deplyd";
+const DEPLYD_RAW: &str = "https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main";
 
 fn main() -> ExitCode {
     // A weakened build must not reach a repository at all. Microseconds.
@@ -62,6 +66,14 @@ fn main() -> ExitCode {
             show_self_check();
             return ExitCode::SUCCESS;
         }
+        Command::Uninstall => {
+            show_uninstall();
+            return ExitCode::SUCCESS;
+        }
+        Command::Update => {
+            show_update();
+            return ExitCode::SUCCESS;
+        }
         Command::Completions { shell } => {
             let mut built = <Cli as clap::CommandFactory>::command();
             completions::emit(*shell, &mut built);
@@ -90,7 +102,18 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let author = resolve_author(&options.author, &settings, &repo);
+    let author = if options.anyone {
+        None
+    } else {
+        Some(resolve_author(&options.author, &settings, &repo))
+    };
+
+    // The flag beats the kept default beats the built-in.
+    let depth = options
+        .depth
+        .or(settings.depth)
+        .map(|value| value as usize)
+        .unwrap_or(deplyd_core::report::DEFAULT_DEPTH);
 
     let mut context = match Context::build(repo.root(), author, settings) {
         Ok(context) => context,
@@ -187,7 +210,7 @@ fn main() -> ExitCode {
                 targets: verdict::target_reports(&context, &targets),
             });
         } else {
-            render::target_summary(&context, &targets, &repo, &web, false);
+            render::target_summary(&context, &targets, &repo, &web, None);
             render::change(&targets, &report, &web);
         }
 
@@ -205,7 +228,7 @@ fn main() -> ExitCode {
                 };
                 print_json(&document);
             } else {
-                render::target_summary(&context, &targets, &repo, &web, false);
+                render::target_summary(&context, &targets, &repo, &web, None);
                 render::change(&targets, &report, &web);
             }
 
@@ -221,9 +244,10 @@ fn main() -> ExitCode {
             let report = match deplyd_core::report::status(
                 &repo,
                 &targets.targets,
-                &context.author,
+                context.author.as_deref(),
                 options.take as usize,
                 options.skip as usize,
+                depth,
             ) {
                 Ok(report) => report,
                 Err(error) => render::stop(&error.to_string(), &[]),
@@ -239,6 +263,7 @@ fn main() -> ExitCode {
                         .iter()
                         .map(|entry| verdict::ChangeReport {
                             label: entry.label.clone(),
+                            author: entry.author.clone(),
                             id: entry.id.clone(),
                             title: entry.title.clone(),
                             commit: entry.sha.clone(),
@@ -251,8 +276,12 @@ fn main() -> ExitCode {
                 };
                 print_json(&document);
             } else {
-                render::target_summary(&context, &targets, &repo, &web, true);
-                render::status(&context, &targets, &report, &web);
+                let page = render::Page {
+                    take: options.take as usize,
+                    skip: options.skip as usize,
+                };
+                render::target_summary(&context, &targets, &repo, &web, Some(page));
+                render::status(&context, &targets, &report, &web, depth);
             }
 
             ExitCode::SUCCESS
@@ -562,6 +591,7 @@ fn remember(settings: &mut Settings, what: Option<&str>, value: Option<&str>) {
         "deplyd remember author \"Ada\"".to_string(),
         "deplyd remember environment staging".to_string(),
         "deplyd remember repo <path>".to_string(),
+        "deplyd remember depth 500".to_string(),
     ];
 
     let Some(key) = what.map(str::to_lowercase) else {
@@ -577,6 +607,13 @@ fn remember(settings: &mut Settings, what: Option<&str>, value: Option<&str>) {
     match key.as_str() {
         "author" => settings.author = Some(value.to_string()),
         "environment" => settings.environment = Some(value.to_string()),
+        "depth" => match value.trim().parse::<u32>() {
+            Ok(depth) if depth > 0 => settings.depth = Some(depth),
+            _ => render::stop(
+                &format!("A depth is a whole number of commits, not '{value}'."),
+                &["deplyd remember depth 500".into()],
+            ),
+        },
         "repo" => {
             let path = PathBuf::from(value);
             if !path.is_dir() {
@@ -625,8 +662,8 @@ fn remember(settings: &mut Settings, what: Option<&str>, value: Option<&str>) {
 fn complete(repo: &Repo, settings: &Settings, what: Option<&str>) {
     match what {
         Some("environments") => {
-            // An empty author: completion must work before one is configured.
-            let Ok(context) = Context::build(repo.root(), String::new(), settings.clone()) else {
+            // No author: completion must work before one is configured.
+            let Ok(context) = Context::build(repo.root(), None, settings.clone()) else {
                 return;
             };
             for name in &context.environments {
@@ -689,6 +726,86 @@ fn show_help() {
 }
 
 /// `check`: what the gateway allows, and whether this binary still obeys it.
+/// A signpost, not a deed. deplyd never deletes - `check` says so and the build
+/// guard enforces it - so removing it stays the installer's job, and this prints
+/// the line that does it.
+/// The line that installs the newest release. Installing over an existing copy is
+/// the update, so there is nothing separate to print.
+fn install_line() -> String {
+    if cfg!(windows) {
+        format!("irm {DEPLYD_RAW}/install.ps1 | iex")
+    } else {
+        format!("curl -fsSL {DEPLYD_RAW}/install.sh | sh")
+    }
+}
+
+/// Asks which release is newest and says whether this is it. Another signpost:
+/// replacing the binary is the installer's job, because deplyd does not write
+/// outside its own config.
+fn show_update() {
+    let current = env!("CARGO_PKG_VERSION");
+
+    let asking = |transport| {
+        GitHub::new(transport, DEPLYD_OWNER.into(), DEPLYD_NAME.into()).latest_release()
+    };
+    let latest = match stub::FileTransport::from_environment() {
+        Some(files) => asking(Box::new(files)),
+        None => credential::find()
+            .ok()
+            .and_then(|found| ReadOnlyHttp::new(found.token, GITHUB_API.to_string()).ok())
+            .and_then(|http| asking(Box::new(http))),
+    };
+
+    println!();
+    println!("{}deplyd {current}{:#}", term::CYAN, term::CYAN);
+    println!();
+
+    match latest.as_deref() {
+        Some(tag) if tag.trim_start_matches('v') == current => {
+            println!("  Up to date: {tag} is the newest release.");
+            println!();
+            return;
+        }
+        Some(tag) => println!("  {tag} is out. To update, run:"),
+        // Not being able to ask is not the same as being current, so it says which.
+        None => println!("  Could not ask which release is newest. To update, run:"),
+    }
+
+    println!();
+    println!("  {}", install_line());
+    println!();
+    println!("  That replaces the binary where it already is. Uninstalling first is");
+    println!("  not needed, and deplyd cannot do it itself: see deplyd check.");
+    println!();
+}
+
+fn show_uninstall() {
+    println!();
+    println!("{}Removing deplyd{:#}", term::CYAN, term::CYAN);
+    println!();
+    println!("  The installer takes back what it put there. Run:");
+    println!();
+
+    let repo = DEPLYD_RAW;
+    if cfg!(windows) {
+        println!("  & ([scriptblock]::Create((irm {repo}/install.ps1))) -Uninstall");
+        println!();
+        println!("  Add -Purge to take the remembered defaults and the cache too.");
+    } else {
+        println!("  curl -fsSL {repo}/install.sh | sh -s -- --uninstall");
+        println!();
+        println!("  Add --purge to take the remembered defaults and the cache too.");
+    }
+
+    println!();
+    println!(
+        "  Settings live in {}",
+        deplyd_core::settings::config_directory().display()
+    );
+    println!("  deplyd does not delete, so it cannot do this itself. See: deplyd check");
+    println!();
+}
+
 fn show_self_check() {
     println!();
     println!("{}deplyd read-only self-check{:#}", term::CYAN, term::CYAN);

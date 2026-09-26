@@ -28,6 +28,8 @@ pub enum Route {
     DeploymentStatuses { deployment_id: u64, limit: u32 },
     /// One pull request.
     PullRequest { number: u32 },
+    /// The newest published release. A prerelease is never "latest".
+    LatestRelease,
 }
 
 impl Route {
@@ -50,6 +52,7 @@ impl Route {
                 limit,
             } => format!("{base}/deployments/{deployment_id}/statuses?per_page={limit}"),
             Route::PullRequest { number } => format!("{base}/pulls/{number}"),
+            Route::LatestRelease => format!("{base}/releases/latest"),
         }
     }
 
@@ -62,6 +65,7 @@ impl Route {
             Route::Deployments { .. } => "deployments",
             Route::DeploymentStatuses { .. } => "a deployment's statuses",
             Route::PullRequest { .. } => "a pull request",
+            Route::LatestRelease => "the newest release",
         }
     }
 }
@@ -192,6 +196,7 @@ pub fn routes_are_read_only() -> Result<Vec<String>, Denied> {
             limit: 5,
         },
         Route::PullRequest { number: 1 },
+        Route::LatestRelease,
     ];
 
     let mut described = Vec::new();

@@ -46,12 +46,47 @@ pub fn stop(message: &str, hints: &[String]) -> ! {
 }
 
 /// What each target is running, and whether that can be trusted.
+/// Names vary wildly, and a column grown to the longest one would push titles
+/// off the screen.
+const AUTHOR_WIDTH: usize = 16;
+
+/// The width to give the author column, or None when the report is one author's
+/// and saying so on every row would be noise.
+fn author_width_for<'a>(
+    author: Option<&str>,
+    entries: impl Iterator<Item = &'a deplyd_core::report::Entry>,
+) -> Option<usize> {
+    if author.is_some() {
+        return None;
+    }
+    let widest = entries
+        .map(|entry| entry.author.chars().count())
+        .max()
+        .unwrap_or(0);
+    Some(widest.min(AUTHOR_WIDTH))
+}
+
+/// The author, padded to the column, or nothing when there is no column.
+fn author_cell(entry: &deplyd_core::report::Entry, width: Option<usize>) -> String {
+    match width {
+        Some(width) => format!("{:<width$}  ", term::truncate(&entry.author, width)),
+        None => String::new(),
+    }
+}
+
+/// How much of a list to show. `-T` and `-S` page every list, not just one.
+#[derive(Clone, Copy)]
+pub struct Page {
+    pub take: usize,
+    pub skip: usize,
+}
+
 pub fn target_summary(
     context: &Context,
     targets: &TargetSet,
     repo: &deplyd_core::repo::Repo,
     web: &WebBase,
-    include_pending: bool,
+    pending: Option<Page>,
 ) {
     let mark = term::glyphs();
 
@@ -107,8 +142,8 @@ pub fn target_summary(
             field_styled(label, &step_text(step), YELLOW);
         }
 
-        if include_pending {
-            pending_for_target(context, repo, web, target);
+        if let Some(page) = pending {
+            pending_for_target(context, repo, web, target, page);
         }
 
         println!();
@@ -184,6 +219,7 @@ fn pending_for_target(
     repo: &deplyd_core::repo::Repo,
     web: &WebBase,
     target: &Target,
+    page: Page,
 ) {
     let Some(branch) = repo.default_branch() else {
         field_styled(
@@ -195,30 +231,60 @@ fn pending_for_target(
     };
 
     let range = format!("{}..{}", target.sha, branch);
-    let pending = deplyd_core::report::records(
+    let all = deplyd_core::report::records(
         repo,
         &[&range],
         &target.scope,
         &target.label,
-        &context.author,
+        context.author.as_deref(),
     )
     .map(|found| deplyd_core::report::merge_records(&found))
     .unwrap_or_default();
 
-    if pending.is_empty() {
+    if all.is_empty() {
         return;
     }
 
-    let id_width = entry_width(&pending);
+    let pending: Vec<_> = all.iter().skip(page.skip).take(page.take).collect();
+    if pending.is_empty() {
+        field_styled(
+            "pending",
+            &format!(
+                "{} in total, nothing left after skipping {}",
+                all.len(),
+                page.skip
+            ),
+            DIM,
+        );
+        return;
+    }
+
+    let id_width = pending.iter().map(|e| e.id.len()).max().unwrap_or(0);
+    let names = author_width_for(context.author.as_deref(), pending.iter().copied());
     for (index, entry) in pending.iter().enumerate() {
         let label = if index == 0 { "pending" } else { "" };
         let linked = link_for(entry, web);
         let pad = id_width.saturating_sub(entry.id.len());
-        let used = 4 + term::FIELD + 1 + id_width + 2;
+        let who = author_cell(entry, names);
+        let used = 4 + term::FIELD + 1 + id_width + 2 + who.chars().count();
         field_styled(
             label,
-            &format!("{linked}{:<pad$}  {}", "", term::fit(&entry.title, used)),
+            &format!(
+                "{linked}{:<pad$}  {who}{}",
+                "",
+                term::fit(&entry.title, used)
+            ),
             YELLOW,
+        );
+    }
+
+    let last = page.skip + pending.len();
+    if last < all.len() {
+        let mark = term::glyphs();
+        field_styled(
+            "",
+            &format!("{} more  {}  --skip {last}", all.len() - last, mark.dot),
+            DIM,
         );
     }
 }
@@ -231,10 +297,25 @@ fn link_for(entry: &deplyd_core::report::Entry, web: &WebBase) -> String {
 }
 
 /// The default report: an author's changes, deployd and pending.
-pub fn status(context: &Context, targets: &TargetSet, report: &StatusReport, web: &WebBase) {
+pub fn status(
+    context: &Context,
+    targets: &TargetSet,
+    report: &StatusReport,
+    web: &WebBase,
+    depth: usize,
+) {
     let mark = term::glyphs();
     // Not "PRs": commits pushed straight to a branch appear here too.
-    let heading = format!("deplyd changes  {}  {}", mark.dot, context.author);
+    let whose = context.author.as_deref().unwrap_or("everyone");
+    let heading = format!("deplyd changes  {}  {whose}", mark.dot);
+
+    // A capped read stopped where it was told to, so the count is a floor. The
+    // plus sign is the difference between "355" and "at least 355".
+    let total = format!(
+        "{}{}",
+        report.live.len(),
+        if report.capped { "+" } else { "" }
+    );
 
     if report.live.is_empty() {
         println!("{CYAN}{heading}{CYAN:#}  {DIM}none{DIM:#}");
@@ -242,8 +323,7 @@ pub fn status(context: &Context, targets: &TargetSet, report: &StatusReport, web
     }
     if report.page.is_empty() {
         println!(
-            "{CYAN}{heading}{CYAN:#}  {DIM}{} in total, nothing left after skipping {}{DIM:#}",
-            report.live.len(),
+            "{CYAN}{heading}{CYAN:#}  {DIM}{total} in total, nothing left after skipping {}{DIM:#}",
             report.skip
         );
         return;
@@ -251,15 +331,13 @@ pub fn status(context: &Context, targets: &TargetSet, report: &StatusReport, web
 
     let first = report.skip + 1;
     let last = report.skip + report.page.len();
-    println!(
-        "{CYAN}{heading}{CYAN:#}  {DIM}{first}-{last} of {}{DIM:#}",
-        report.live.len()
-    );
+    println!("{CYAN}{heading}{CYAN:#}  {DIM}{first}-{last} of {total}{DIM:#}");
     println!();
 
     let label_width = targets.label_width();
     let id_width = entry_width(&report.page);
     let show_labels = targets.labels_are_informative();
+    let names = author_width_for(context.author.as_deref(), report.page.iter());
 
     for entry in &report.page {
         let reverted = deplyd_core::history::was_reverted(&entry.sha, &report.reverted);
@@ -269,12 +347,14 @@ pub fn status(context: &Context, targets: &TargetSet, report: &StatusReport, web
             String::new()
         };
 
+        let who = author_cell(entry, names);
         let used = 2
             + if show_labels { label_width + 2 } else { 0 }
             + DATE_WIDTH
             + 2
             + id_width
             + 2
+            + who.chars().count()
             + suffix.chars().count();
         let title = term::fit(&entry.title, used);
         let linked = link_for(entry, web);
@@ -288,12 +368,12 @@ pub fn status(context: &Context, targets: &TargetSet, report: &StatusReport, web
 
         if reverted {
             println!(
-                "  {label}{DIM}{:<DATE_WIDTH$}{DIM:#}  {linked}{:<pad$}  {RED}{title}{suffix}{RED:#}",
+                "  {label}{DIM}{:<DATE_WIDTH$}{DIM:#}  {linked}{:<pad$}  {DIM}{who}{DIM:#}{RED}{title}{suffix}{RED:#}",
                 entry.date, ""
             );
         } else {
             println!(
-                "  {label}{DIM}{:<DATE_WIDTH$}{DIM:#}  {linked}{:<pad$}  {title}",
+                "  {label}{DIM}{:<DATE_WIDTH$}{DIM:#}  {linked}{:<pad$}  {DIM}{who}{DIM:#}{title}",
                 entry.date, ""
             );
         }
@@ -301,9 +381,17 @@ pub fn status(context: &Context, targets: &TargetSet, report: &StatusReport, web
 
     if last < report.live.len() {
         println!(
-            "  {DIM}{} older  {}  --skip {last}{DIM:#}",
+            "  {DIM}{}{} older  {}  --skip {last}{DIM:#}",
             report.live.len() - last,
+            if report.capped { "+" } else { "" },
             mark.dot
+        );
+    }
+
+    if report.capped {
+        println!();
+        println!(
+            "{DIM}  Stopped after {depth} commits per target. Read further with --depth.{DIM:#}"
         );
     }
 
@@ -313,6 +401,8 @@ pub fn status(context: &Context, targets: &TargetSet, report: &StatusReport, web
             "{DIM}  Listed against the last completed deploy; newer ones did not complete.{DIM:#}"
         );
     }
+
+    println!();
 }
 
 /// `pr` and `commit`: is this change deployd, and if not, why not.
@@ -605,7 +695,10 @@ pub fn config(context: &Context) {
     println!("Repo           {}", context.repo_root.display());
     println!("Environments   {}", context.environments.join(", "));
     println!("Selected       {}", context.environment);
-    println!("Author         {}", context.author);
+    println!(
+        "Author         {}",
+        context.author.as_deref().unwrap_or("everyone")
+    );
     println!();
     println!("{CYAN}Deploy workflows ({}){CYAN:#}", workflows.len());
 
@@ -706,4 +799,50 @@ pub fn authors(repo: &deplyd_core::repo::Repo) {
     );
     println!("{DIM}One person can appear under several names; git counts them separately.{DIM:#}");
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(author: &str) -> deplyd_core::report::Entry {
+        deplyd_core::report::Entry {
+            when: 0,
+            author: author.to_string(),
+            date: String::new(),
+            label: String::new(),
+            sha: String::new(),
+            id: String::new(),
+            pull_request: None,
+            title: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_long_name_is_cut_to_the_column() {
+        let long = entry("Wolfeschlegelsteinhausenbergerdorff");
+        let cell = author_cell(&long, Some(AUTHOR_WIDTH));
+        assert_eq!(
+            cell.chars().count(),
+            AUTHOR_WIDTH + 2,
+            "padded to the column"
+        );
+        assert!(
+            cell.trim_end().ends_with('…'),
+            "cut, not squeezed: {cell:?}"
+        );
+    }
+
+    #[test]
+    fn the_column_is_only_as_wide_as_the_longest_name() {
+        let entries = [entry("Ada"), entry("Grace")];
+        assert_eq!(author_width_for(None, entries.iter()), Some(5));
+    }
+
+    #[test]
+    fn one_authors_report_has_no_column() {
+        let entries = [entry("Ada")];
+        assert_eq!(author_width_for(Some("Ada"), entries.iter()), None);
+        assert_eq!(author_cell(&entries[0], None), "");
+    }
 }
