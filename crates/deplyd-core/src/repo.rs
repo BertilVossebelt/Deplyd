@@ -136,6 +136,14 @@ impl Repo {
         Ok(true)
     }
 
+    /// Fetches however many times it is asked. `fetch_once` is for a single run;
+    /// a watcher needs the remote's news every time round the loop.
+    pub fn fetch_again(&self) -> Result<(), RepoError> {
+        self.fetched.set(true);
+        self.run(Verb::Fetch, &["origin", "--quiet"])?;
+        Ok(())
+    }
+
     /// Whether a commit is in this clone, fetching once if it is not and we have not
     /// already tried.
     pub fn commit_exists(&self, sha: &str, allow_fetch: bool) -> bool {

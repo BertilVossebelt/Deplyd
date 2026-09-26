@@ -801,6 +801,120 @@ pub fn authors(repo: &deplyd_core::repo::Repo) {
     println!();
 }
 
+// --- watching ---------------------------------------------------------------
+
+/// The line a watcher opens with, so it is obvious what it is waiting for and
+/// that nothing being printed means nothing is happening.
+pub fn watch_opening(
+    context: &Context,
+    until: &crate::WatchUntil,
+    every: std::time::Duration,
+    has_deadline: bool,
+) {
+    let mark = term::glyphs();
+    let whose = context.author.as_deref().unwrap_or("everyone");
+    let waiting = match until {
+        crate::WatchUntil::Forever => "until you stop it".to_string(),
+        crate::WatchUntil::PullRequest(number) => format!("until PR #{number} is live"),
+        crate::WatchUntil::Commit(reference) => format!("until {reference} is live"),
+    };
+    let deadline = if has_deadline {
+        ", or --for runs out"
+    } else {
+        ""
+    };
+
+    println!();
+    println!(
+        "{CYAN}watching  {}  {whose}{CYAN:#}  {DIM}every {}, {waiting}{deadline}{DIM:#}",
+        mark.dot,
+        spoken(every)
+    );
+    println!();
+}
+
+/// One event. Human output is a line you can watch scroll past; --json is one
+/// object per line, so something else can read it as it arrives.
+pub fn watch_event(event: &deplyd_core::watch::Event, json: bool, web: &WebBase) {
+    if json {
+        if let Ok(line) = serde_json::to_string(event) {
+            println!("{line}");
+            // A watcher's reader is waiting on this line, not on the process
+            // ending, so it cannot sit in a buffer until then.
+            let _ = std::io::stdout().flush();
+        }
+        return;
+    }
+
+    let mark = term::glyphs();
+    let (glyph, colour) = match event.kind {
+        deplyd_core::watch::Kind::DeployStarted => (mark.dot, DIM),
+        deplyd_core::watch::Kind::DeploySucceeded => (mark.ok, GREEN),
+        deplyd_core::watch::Kind::DeployFailed => (mark.bad, RED),
+        deplyd_core::watch::Kind::ChangeLive => (mark.ok, GREEN),
+    };
+
+    let linked = if event.url.is_empty() {
+        event.id.clone()
+    } else {
+        term::link(&event.id, &event.url)
+    };
+    let who = if event.author.is_empty() {
+        String::new()
+    } else {
+        format!("  {DIM}{}{DIM:#}", event.author)
+    };
+    let _ = web;
+
+    println!(
+        "  {DIM}{}{DIM:#}  {colour}{glyph} {:<8}{colour:#}  {BOLD}{}{BOLD:#}  {linked}  {}{who}",
+        now_hms(),
+        event.kind.as_str().split('.').next_back().unwrap_or(""),
+        event.label,
+        event.title
+    );
+    let _ = std::io::stdout().flush();
+}
+
+/// GitHub asked for a pause. Said out loud, because a watcher that went quiet
+/// for twenty minutes would otherwise look broken.
+pub fn watch_paused(wait: std::time::Duration) {
+    println!(
+        "  {DIM}{}  GitHub asked deplyd to wait {}s before looking again{DIM:#}",
+        now_hms(),
+        wait.as_secs()
+    );
+    let _ = std::io::stdout().flush();
+}
+
+pub fn watch_closing(reason: &str) {
+    println!();
+    println!("{DIM}Stopped: {reason}.{DIM:#}");
+    println!();
+}
+
+/// A length of time said the way it was typed: 300 seconds is "5m".
+fn spoken(length: std::time::Duration) -> String {
+    let seconds = length.as_secs();
+    match seconds {
+        0 => "no time".to_string(),
+        s if s % 3600 == 0 => format!("{}h", s / 3600),
+        s if s % 60 == 0 => format!("{}m", s / 60),
+        s => format!("{s}s"),
+    }
+}
+
+/// Wall-clock time of day, for a log someone reads as it happens. Only the clock
+/// is asked for: deplyd does no calendar arithmetic of its own.
+fn now_hms() -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0);
+    let day = seconds % 86_400;
+    format!("{:02}:{:02}:{:02}", day / 3600, (day % 3600) / 60, day % 60)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

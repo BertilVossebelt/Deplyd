@@ -10,6 +10,7 @@ mod term;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::{Duration, Instant};
 
 use anstream::println;
 use clap::Parser;
@@ -158,6 +159,24 @@ fn main() -> ExitCode {
         _ => None,
     };
 
+    // Read here, with the other arguments and before any request: a typo in a
+    // duration is the user's to fix, and finding out after a round trip is worse.
+    let watch_plan = match &command {
+        Command::Watch {
+            pull_request,
+            commit,
+            duration,
+            every,
+        } => Some(WatchPlan::read(
+            pull_request.as_deref(),
+            commit.as_deref(),
+            duration.as_deref(),
+            every.as_deref(),
+            context.settings.watch_every,
+        )),
+        _ => None,
+    };
+
     let pull_request_number = match &command {
         Command::Pr { number } => match cli::read_pull_request_number(number.as_ref()) {
             Ok(number) => Some(number),
@@ -189,6 +208,20 @@ fn main() -> ExitCode {
     for index in 0..targets.targets.len() {
         let concerns = targets::concerns_for(&targets.targets[index], &runs, &labels, &github);
         targets.targets[index].concerns = concerns;
+    }
+
+    if let Some(plan) = watch_plan {
+        return watch_loop(
+            &context,
+            &repo,
+            &github,
+            &mut cache,
+            &web,
+            &options,
+            depth,
+            (runs, targets),
+            plan,
+        );
     }
 
     if let Some(reference) = commit_reference {
@@ -403,6 +436,285 @@ fn open_github(repo: &Repo) -> (GitHub, (String, String), WebBase) {
     }
 }
 
+/// What a watcher was told to wait for, if anything.
+enum WatchUntil {
+    Forever,
+    PullRequest(u32),
+    Commit(String),
+}
+
+impl WatchUntil {
+    fn read(pull_request: Option<&str>, commit: Option<&str>) -> Self {
+        match (pull_request, commit) {
+            (Some(_), Some(_)) => render::stop(
+                "Wait for a pull request or for a commit, not both.",
+                &["deplyd watch --pr 412".into()],
+            ),
+            (Some(number), None) => {
+                match cli::read_pull_request_number(Some(&number.to_string())) {
+                    Ok(number) => WatchUntil::PullRequest(number),
+                    Err(message) => render::stop(&message, &["deplyd watch --pr 412".into()]),
+                }
+            }
+            (None, Some(reference)) => match reference.trim() {
+                "" => render::stop("Which commit?", &["deplyd watch --commit a1b2c3d".into()]),
+                text => WatchUntil::Commit(text.to_string()),
+            },
+            (None, None) => WatchUntil::Forever,
+        }
+    }
+}
+
+/// Looking oftener than this spends an hourly allowance fast for very little:
+/// a look costs a request per deploy workflow, plus a few for what it finds.
+const FASTEST_LOOK: Duration = Duration::from_secs(10);
+
+/// Everything `watch` was asked for, checked before anything is fetched.
+struct WatchPlan {
+    until: WatchUntil,
+    every: Duration,
+    length: Option<Duration>,
+}
+
+impl WatchPlan {
+    fn read(
+        pull_request: Option<&str>,
+        commit: Option<&str>,
+        duration: Option<&str>,
+        every: Option<&str>,
+        kept: Option<u32>,
+    ) -> Self {
+        let interval = read_interval(every, kept.unwrap_or(60) as u64, "--every");
+        if interval < FASTEST_LOOK {
+            render::stop(
+                &format!(
+                    "Looking every {}s is faster than deplyd will go.",
+                    interval.as_secs()
+                ),
+                &[
+                    format!(
+                        "{}s is the floor: a look costs several requests, out of an hourly allowance.",
+                        FASTEST_LOOK.as_secs()
+                    ),
+                    "--every 5m is plenty for watching a deploy you are waiting on.".into(),
+                ],
+            );
+        }
+
+        Self {
+            until: WatchUntil::read(pull_request, commit),
+            every: interval,
+            length: duration.map(|given| read_interval(Some(given), 0, "--for")),
+        }
+    }
+}
+
+fn read_interval(text: Option<&str>, fallback: u64, flag: &str) -> Duration {
+    match text {
+        None => Duration::from_secs(fallback),
+        Some(given) => match deplyd_core::watch::parse_duration(given) {
+            Some(duration) => duration,
+            None => render::stop(
+                &format!("'{given}' is not a length of time."),
+                &[format!("{flag} 30s, {flag} 5m and {flag} 2h all work.")],
+            ),
+        },
+    }
+}
+
+/// Polls, says what changed, and stops when it was told to.
+///
+/// The first look is the baseline. Announcing everything already true would be
+/// a wall of news about things that happened before anyone was watching.
+#[allow(clippy::too_many_arguments)]
+fn watch_loop(
+    context: &Context,
+    repo: &Repo,
+    github: &GitHub,
+    cache: &mut deplyd_core::cache::Cache,
+    web: &WebBase,
+    options: &cli::Options,
+    depth: usize,
+    first: (Vec<deplyd_core::github::Run>, TargetSet),
+    plan: WatchPlan,
+) -> ExitCode {
+    let WatchPlan {
+        until,
+        every,
+        length,
+    } = plan;
+    let deadline = length.map(|length| Instant::now() + length);
+
+    // Progress chatter belongs to the first look only; repeating it every minute
+    // would bury the events underneath it.
+    let quiet = Output { json: true };
+    let mut previous: Option<deplyd_core::watch::Snapshot> = None;
+    let (mut runs, mut targets) = first;
+
+    if !options.json {
+        render::watch_opening(context, &until, every, deadline.is_some());
+    }
+
+    loop {
+        let report = match deplyd_core::report::status(
+            repo,
+            &targets.targets,
+            context.author.as_deref(),
+            usize::MAX,
+            0,
+            depth,
+        ) {
+            Ok(report) => report,
+            Err(error) => render::stop(&error.to_string(), &[]),
+        };
+
+        // Asked before the events are worked out: a look that was refused saw an
+        // empty GitHub, and treating that as the truth would report everything as
+        // gone and then, next time, as new.
+        if let Some(wait) = github.rate_limited() {
+            let wait = wait.max(Duration::from_secs(60));
+            if !options.json {
+                render::watch_paused(wait);
+            }
+            std::thread::sleep(wait);
+            github.forget();
+            let _ = repo.fetch_again();
+            runs = collect_runs(context, github, &quiet);
+            targets = targets::build(context, repo, github, &runs, cache, |_| {});
+            cache.save();
+            continue;
+        }
+
+        let snapshot = snapshot_of(&runs, &targets, &report);
+        match &previous {
+            None => {}
+            Some(before) => {
+                for event in deplyd_core::watch::changes(before, &snapshot) {
+                    render::watch_event(&event, options.json, web);
+                }
+            }
+        }
+        previous = Some(snapshot);
+
+        // Asked after the events, so the run that carried a change is reported
+        // before the watcher exits on it.
+        if let Some((code, reason)) = watch_reached(context, repo, github, &targets, &until) {
+            if !options.json {
+                render::watch_closing(reason);
+            }
+            return code;
+        }
+        let out_of_time = || deadline.is_some_and(|end| Instant::now() >= end);
+        if out_of_time() {
+            if !options.json {
+                render::watch_closing("time is up");
+            }
+            return ExitCode::SUCCESS;
+        }
+
+        // Never sleep past the deadline: --for 30s with --every 5m should stop at
+        // thirty seconds, not five minutes.
+        let pause = match deadline {
+            Some(end) => every.min(end.saturating_duration_since(Instant::now())),
+            None => every,
+        };
+        std::thread::sleep(pause);
+
+        // Checked again rather than falling into a look nobody will read.
+        if out_of_time() {
+            if !options.json {
+                render::watch_closing("time is up");
+            }
+            return ExitCode::SUCCESS;
+        }
+
+        // Everything memoised is from the last look, and a watcher that trusted
+        // it would report nothing for as long as it ran.
+        github.forget();
+        let _ = repo.fetch_again();
+        runs = collect_runs(context, github, &quiet);
+        targets = targets::build(context, repo, github, &runs, cache, |_| {});
+        cache.save();
+    }
+}
+
+/// Whether the thing being waited for has happened, and what to say about it.
+/// None means keep watching. Saying it is the caller's job, because a JSON
+/// stream has no room for a sentence.
+fn watch_reached(
+    context: &Context,
+    repo: &Repo,
+    github: &GitHub,
+    targets: &TargetSet,
+    until: &WatchUntil,
+) -> Option<(ExitCode, &'static str)> {
+    let report = match until {
+        WatchUntil::Forever => return None,
+        WatchUntil::PullRequest(number) => {
+            verdict::pull_request_report(context, repo, github, targets, *number)
+        }
+        WatchUntil::Commit(reference) => verdict::commit_report(context, repo, targets, reference),
+    };
+
+    match report.status {
+        verdict::Status::Deplyd => Some((ExitCode::SUCCESS, "what you were waiting for is live")),
+        // A pull request that cannot ever go live is not something to wait out.
+        verdict::Status::NotFound | verdict::Status::NotCovered => Some((
+            ExitCode::from(verdict::exit_code(report.status, false)),
+            "there is nothing here to wait for",
+        )),
+        _ => None,
+    }
+}
+
+/// One look, in the shape the differ compares.
+fn snapshot_of(
+    runs: &[deplyd_core::github::Run],
+    targets: &TargetSet,
+    report: &deplyd_core::report::Status,
+) -> deplyd_core::watch::Snapshot {
+    let label_for = |run: &deplyd_core::github::Run| {
+        targets
+            .targets
+            .iter()
+            .find(|target| target.run_id == run.id)
+            .map(|target| target.label.clone())
+            .unwrap_or_else(|| run.workflow_file.clone())
+    };
+
+    deplyd_core::watch::Snapshot {
+        runs: runs
+            .iter()
+            .map(|run| {
+                (
+                    run.id,
+                    deplyd_core::watch::RunState {
+                        label: label_for(run),
+                        status: run.status.clone(),
+                        conclusion: run.conclusion.clone(),
+                        url: run.html_url.clone(),
+                    },
+                )
+            })
+            .collect(),
+        live: report
+            .live
+            .iter()
+            .map(|entry| {
+                (
+                    entry.sha.clone(),
+                    deplyd_core::watch::LiveChange {
+                        id: entry.id.clone(),
+                        title: entry.title.clone(),
+                        author: entry.author.clone(),
+                        label: entry.label.clone(),
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
 fn collect_runs(
     context: &Context,
     github: &GitHub,
@@ -591,6 +903,7 @@ fn remember(settings: &mut Settings, what: Option<&str>, value: Option<&str>) {
         "deplyd remember author \"Ada\"".to_string(),
         "deplyd remember environment staging".to_string(),
         "deplyd remember repo <path>".to_string(),
+        "deplyd remember every 5m".to_string(),
         "deplyd remember depth 500".to_string(),
     ];
 
@@ -607,6 +920,24 @@ fn remember(settings: &mut Settings, what: Option<&str>, value: Option<&str>) {
     match key.as_str() {
         "author" => settings.author = Some(value.to_string()),
         "environment" => settings.environment = Some(value.to_string()),
+        "every" => match deplyd_core::watch::parse_duration(value) {
+            // Refused here as well as at watch time, so a default that could
+            // never be used is not quietly written down.
+            Some(every) if every >= FASTEST_LOOK => {
+                settings.watch_every = Some(every.as_secs() as u32)
+            }
+            Some(_) => render::stop(
+                &format!(
+                    "Looking every {value} is faster than deplyd will go, {}s is the floor.",
+                    FASTEST_LOOK.as_secs()
+                ),
+                &["deplyd remember every 5m".into()],
+            ),
+            None => render::stop(
+                &format!("'{value}' is not a length of time."),
+                &["deplyd remember every 5m".into()],
+            ),
+        },
         "depth" => match value.trim().parse::<u32>() {
             Ok(depth) if depth > 0 => settings.depth = Some(depth),
             _ => render::stop(

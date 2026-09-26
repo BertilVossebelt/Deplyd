@@ -3,12 +3,12 @@
 _Is my pull request deployed?_
 
 Deplyd answers that for any repo that deploys through GitHub Actions. It names the
-commit each environment was last deployed from, and tells you which of your changes are
+commit each environment was last deployed from and tells you which of your changes are
 in it.
 
 GitHub's deployments page shows one row per deploy run with one commit title. It never
 shows which commits went out, so answering this by hand means opening runs, reading
-logs and comparing SHAs. This does that for you.
+logs, and comparing SHAs. This does that for you.
 
 It was built for the case where you cannot change anything: no access to the servers,
 no authority over the deploy workflows, no pipeline step you are allowed to add.
@@ -118,11 +118,11 @@ it does - deplyd does not delete, which is the point of `dp check`.
 The installer does all of this. You only need it if you built from source, or said no
 to something.
 
-| | |
-|---------------|--------------------------------------------------------------------|
-| Sign in       | `gh auth login` |
-| Completion    | `deplyd completions powershell >> $PROFILE.CurrentUserAllHosts`, or bash, zsh, fish, elvish |
-| Short name    | `dp` is a link to `deplyd`, made next to it |
+|            |                                                                                             |
+|------------|---------------------------------------------------------------------------------------------|
+| Sign in    | `gh auth login`                                                                             |
+| Completion | `deplyd completions powershell >> $PROFILE.CurrentUserAllHosts`, or bash, zsh, fish, elvish |
+| Short name | `dp` is a link to `deplyd`, made next to it                                                 |
 
 Signing in is a device flow against access you already have. deplyd never asks you to
 create a personal access token: on an organisation repository that can need an owner's
@@ -152,6 +152,7 @@ Run it from inside any repo.
 | `deplyd remember`       | keep a default author, environment or repo           |
 | `deplyd completions`    | shell completion scripts                             |
 | `deplyd check`          | prove it can only read                               |
+| `deplyd watch`          | deploys and changes going live, as they happen       |
 | `deplyd update`         | whether a newer release is out, and how to get it    |
 | `deplyd uninstall`      | how to remove deplyd from this machine               |
 
@@ -176,12 +177,45 @@ Defaults can be kept:
 deplyd remember author "Ada"
 deplyd remember environment staging
 deplyd remember repo /path/to/repo
+deplyd remember every 5m
 deplyd remember depth 500
 ```
 
 Depth is how far back each target is read. The default of 200 keeps a long history
 from being walked on every run; when it stops early the count is shown as `355+` and
 the report says so, rather than presenting a ceiling as a total.
+
+## Watching
+
+`deplyd watch` looks again every so often and prints what changed since the last
+look: a deploy starting, succeeding, or failing, and a change crossing from pending
+to live. `-E`, `-A` and `--anyone` narrow it the same way they narrow `status`.
+
+```bash
+deplyd watch --anyone -E production
+deplyd watch --pr 412 --for 2h        # exits 0 the moment it is live
+deplyd watch --every 5m --json        # one JSON object per line, per event
+```
+
+| Option               |                                           |
+|----------------------|-------------------------------------------|
+| `--every <duration>` | how often to look, default 60s, floor 10s |
+| `--for <duration>`   | stop after this long                      |
+| `--pr <number>`      | stop once that pull request is live       |
+| `--commit <ref>`     | stop once that commit is live             |
+
+`30s`, `5m` and `2h` are all understood, and `deplyd remember every 5m` keeps one
+so you need not type it. The first look is the baseline, so nothing is announced
+until something actually changes. Ctrl-C stops it at any point.
+
+**It costs API requests.** Every look is a handful, and more the more deploy
+workflows a repository has. They come out of an hourly allowance shared with `gh`,
+so looking every few minutes is plenty for a deploy you are waiting on, and looking
+every ten seconds at a repository with a dozen deploy workflows is worth a thought
+first. Ten seconds is the floor, refused before anything is fetched.
+
+Steady polling is ordinary use. If GitHub does ask deplyd to slow down, it waits as
+long as it was told, says so, and carries on.
 
 ## In a script
 
@@ -214,22 +248,22 @@ answer at all.
 
 Per target:
 
-|             |                                                                           |
-|-------------|---------------------------------------------------------------------------|
-| `DEPLYD`    | built and released, with no newer deploy failing or in flight             |
-| `UNCERTAIN` | a newer deploy did not complete, or the commit could not be read reliably |
+|             |                                                                               |
+|-------------|-------------------------------------------------------------------------------|
+| `DEPLYD`    | built and released, with no newer deploy failing or in flight                 |
+| `UNCERTAIN` | a newer deploy did not complete, or the commit could not be read reliably     |
 | `because`   | what made it uncertain: the run that failed, or the reading that did not hold |
-| `skipped`   | steps the run skipped. Changes to those are not live                     |
+| `skipped`   | steps the run skipped. Changes to those are not live                          |
 
 Per change:
 
-|                                |                                                       |
-|--------------------------------|-------------------------------------------------------|
-| `DEPLYD in <sha>`              | it is in the deployed commit                          |
-| `DEPLYD in <sha> as a copy`    | the commit is absent but the same change is there, cherry-picked or rebased |
-| `REVERTED undone before <sha>` | it shipped, then was undone before the deployed commit |
-| `NOT DEPLYD deployed <sha>`    | neither the commit nor an equivalent change is there  |
-| `NOT MERGED`                   | still open, or closed without merging                 |
+|                                |                                                                                                                                         |
+|--------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
+| `DEPLYD in <sha>`              | it is in the deployed commit                                                                                                            |
+| `DEPLYD in <sha> as a copy`    | the commit is absent but the same change is there, cherry-picked or rebased                                                             |
+| `REVERTED undone before <sha>` | it shipped, then was undone before the deployed commit                                                                                  |
+| `NOT DEPLYD deployed <sha>`    | neither the commit nor an equivalent change is there                                                                                    |
+| `NOT MERGED`                   | still open, or closed without merging                                                                                                   |
 | `NOT COVERED`                  | it changed no path any target covers. Lists every target and what it covers, since a wrong scope looks identical to an unrelated change |
 
 `DEPLYD` means the code was built and the deploy ran to completion. Nothing outside the
@@ -265,13 +299,13 @@ The file stays out of your working tree. To share the fixes, move it to the repo
 }
 ```
 
-| Key                             | Fixes                                               |
-|---------------------------------|-----------------------------------------------------|
+| Key                             | Fixes                                                                       |
+|---------------------------------|-----------------------------------------------------------------------------|
 | `deployPattern`                 | a deploy workflow not being found, or a non-deploy one being treated as one |
-| `environments`                  | the wrong environment list. Your names replace the detected ones |
-| `environments.<name>.workflows` | the wrong workflows for an environment. An explicit list always wins |
-| `ignoreJobs`                    | a job showing up as a target that should not        |
-| `scopes`                        | which paths a target covers. Keyed by the label deplyd reports |
+| `environments`                  | the wrong environment list. Your names replace the detected ones            |
+| `environments.<name>.workflows` | the wrong workflows for an environment. An explicit list always wins        |
+| `ignoreJobs`                    | a job showing up as a target that should not                                |
+| `scopes`                        | which paths a target covers. Keyed by the label deplyd reports              |
 
 A file that will not parse stops the run and gets named. Carrying on without it would
 silently drop the corrections it exists to hold.
@@ -281,12 +315,12 @@ silently drop the corrections it exists to hold.
 Useful for reading `deplyd config`, and for telling which key to set. None of it is a
 requirement.
 
-| It is treated as   | When                                                           |
-|--------------------|----------------------------------------------------------------|
-| a deploy workflow  | the filename or `name:` contains `deploy`, `release`, `publish`, `ship` or `cd`; or a job declares an `environment:`; or a step uses a known deploy action or runs an applying command |
-| an environment     | the name appears in the filename, in a job's `environment:`, or in a `workflow_dispatch` choice input |
-| a target           | a job that is not plumbing, with at least three steps. Names containing `merge`, `notify`, `lint`, `test`, `setup` and similar are skipped |
-| that target's scope | the job's `defaults.run.working-directory`; or a directory all its steps agree on; or the workflow's own `paths:` trigger filter |
+| It is treated as    | When                                                                                                                                                                                   |
+|---------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| a deploy workflow   | the filename or `name:` contains `deploy`, `release`, `publish`, `ship` or `cd`; or a job declares an `environment:`; or a step uses a known deploy action or runs an applying command |
+| an environment      | the name appears in the filename, in a job's `environment:`, or in a `workflow_dispatch` choice input                                                                                  |
+| a target            | a job that is not plumbing, with at least three steps. Names containing `merge`, `notify`, `lint`, `test`, `setup` and similar are skipped                                             |
+| that target's scope | the job's `defaults.run.working-directory`; or a directory all its steps agree on; or the workflow's own `paths:` trigger filter                                                       |
 
 Those words match whole words only, so a job called `deploy-latest` is not read as a
 test job.
@@ -302,7 +336,7 @@ workflow deploys to staging and then production, the jobs are told apart by thei
 deplyd cannot write to your repository and does not ask you to take that on trust.
 
 The dangerous operations do not exist rather than being refused: every git call names a
-verb from a fixed set with no `push`, no `reset` and no `checkout`, and every GitHub
+verb from a fixed set with no `push`, no, and no `checkout`, and every GitHub
 request is one of six routes with no method to set. Arguments that would write are
 refused before anything runs. And because a compiled binary cannot audit the source it
 came from, every invocation exercises its own refusal paths first. A build whose guard
