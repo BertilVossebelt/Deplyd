@@ -34,6 +34,9 @@ pub struct Settings {
     pub environment: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_path: Option<String>,
+    /// Seconds between looks, for `watch`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watch_every: Option<u32>,
 }
 
 impl Settings {
