@@ -31,6 +31,19 @@ The guard runs again even though CI ran on the pull request. The attestation say
 binary came from a commit; the guard job is what makes that worth anything, by
 recording what was true of that commit before it was signed.
 
+## Branches
+
+Work goes `feat/* -> dev -> main`. Main's ruleset takes care of the rest; these two
+are the parts it cannot express.
+
+`gh pr create` bases on the repository's default branch, which is `main`. Pass
+`--base dev`, or a feature branch lands on main and the two histories part company.
+
+`main` is not only history. `install.sh` and `install.ps1` are fetched from it by
+every `curl | sh`, and `deplyd uninstall` prints a link to it, so what is merged
+there is live immediately. An installer reaching main has to work against the
+release that exists now, not the one about to be cut.
+
 ## Rehearsing
 
 Builds every target and publishes nothing:
