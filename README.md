@@ -78,7 +78,7 @@ to something.
 | | |
 |---------------|--------------------------------------------------------------------|
 | Sign in       | `gh auth login` |
-| Completion    | `deplyd completions powershell >> $PROFILE`, or bash, zsh, fish, elvish |
+| Completion    | `deplyd completions powershell >> $PROFILE.CurrentUserAllHosts`, or bash, zsh, fish, elvish |
 | Short name    | `dp` is a link to `deplyd`, made next to it |
 
 Signing in is a device flow against access you already have. deplyd never asks you to

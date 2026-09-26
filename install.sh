@@ -196,11 +196,15 @@ if [ -n "$rc" ]; then
     if grep -qF "$START" "$rc" 2>/dev/null; then
         sed -i.deplyd-bak "/^$START\$/,/^$END\$/d" "$rc" && rm -f "$rc.deplyd-bak"
     fi
-    {
-        printf '%s\n' "$START"
-        "$INSTALL_DIR/deplyd" completions "$shell"
-        printf '%s\n' "$END"
-    } >> "$rc"
+    # A copy appended before the script carried markers ran to the end of the file,
+    # appending being the only way it got there. Cut from where it starts.
+    first=$(grep -nE '^(command -v dp >/dev/null|_deplyd\(\)|_dp\(\)|complete -c deplyd)' "$rc" 2>/dev/null |
+        head -1 | cut -d: -f1)
+    if [ -n "$first" ]; then
+        head -n $((first - 1)) "$rc" > "$rc.deplyd-new" && mv "$rc.deplyd-new" "$rc"
+    fi
+    # The markers come from the binary now, so they arrive with the script.
+    "$INSTALL_DIR/deplyd" completions "$shell" >> "$rc"
     say "  completion added to $rc"
 else
     say "  completion skipped - unknown shell. Run: deplyd completions bash >> ~/.bashrc"

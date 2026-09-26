@@ -9,11 +9,18 @@ use clap_complete::Shell;
 /// Both names the binary answers to. The installer links the second to the first.
 const NAMES: [&str; 2] = ["deplyd", "dp"];
 
+/// Written around the script so it can be found again. Appending this to a startup
+/// file twice has to leave one copy, whether the installer did it or a person did,
+/// and a comment is a comment in every shell here.
+pub const START_MARKER: &str = "# >>> deplyd completions >>>";
+pub const END_MARKER: &str = "# <<< deplyd completions <<<";
+
 pub fn emit(shell: Shell, command: &mut ClapCommand) {
     // --help and --version are added during the build, and completion should offer
     // them like any other flag.
     command.build();
 
+    println!("{START_MARKER}");
     alias(shell);
 
     // PowerShell is hand-written because it is the only generator that can also ask
@@ -21,12 +28,12 @@ pub fn emit(shell: Shell, command: &mut ClapCommand) {
     // completion is for. The rest get names and flags.
     if shell == Shell::PowerShell {
         powershell(command);
-        return;
+    } else {
+        for name in NAMES {
+            clap_complete::generate(shell, command, name, &mut io::stdout());
+        }
     }
-
-    for name in NAMES {
-        clap_complete::generate(shell, command, name, &mut io::stdout());
-    }
+    println!("{END_MARKER}");
 }
 
 /// Only when nothing else owns the name: someone else's `dp` is not ours to take.

@@ -214,34 +214,57 @@ if ($gh) {
 $startMarker = '# >>> deplyd completions >>>'
 $endMarker = '# <<< deplyd completions <<<'
 
-try {
-    $profilePath = $PROFILE.CurrentUserAllHosts
-    New-Item -ItemType Directory -Path (Split-Path $profilePath) -Force | Out-Null
+# Anything the script defines, so a copy appended before it carried markers is still
+# recognised rather than left behind next to a second one.
+$unmarked = '^\s*(if \(-not \(Get-Command dp |\$script:Deplyd|Register-ArgumentCompleter -Native -CommandName .deplyd|function script:Deplyd)'
 
-    $lines = if (Test-Path -LiteralPath $profilePath) {
-        @(Get-Content -LiteralPath $profilePath)
-    } else {
-        @()
-    }
+function Remove-DeplydBlock($path) {
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
 
-    # Drop our own previous block, and any launcher line left by the PowerShell
-    # version of deplyd, whose file no longer exists.
     $kept = @()
     $inBlock = $false
-    foreach ($line in $lines) {
+    foreach ($line in @(Get-Content -LiteralPath $path)) {
         if ($line -eq $startMarker) { $inBlock = $true; continue }
         if ($line -eq $endMarker) { $inBlock = $false; continue }
         if ($inBlock) { continue }
+        # A launcher line left by the PowerShell version, whose file is long gone.
         if ($line -match 'deplyd' -and $line -match 'shell-init\.ps1') { continue }
         $kept += $line
     }
 
-    $block = @($startMarker) + @(& (Join-Path $installDir 'deplyd.exe') completions powershell) + @($endMarker)
+    # An unmarked copy is removed whole: it runs to the end of the file, because
+    # appending is the only way it got there.
+    for ($i = 0; $i -lt $kept.Count; $i++) {
+        if ($kept[$i] -match $unmarked) {
+            $kept = if ($i -eq 0) { @() } else { @($kept | Select-Object -First $i) }
+            break
+        }
+    }
+    return $kept
+}
+
+try {
+    # All hosts, so the VS Code terminal and the ISE get it too. Both files are
+    # cleaned, in case an earlier install wrote to the other one.
+    $profilePath = $PROFILE.CurrentUserAllHosts
+    $otherPath = $PROFILE.CurrentUserCurrentHost
+
+    if ($otherPath -ne $profilePath -and (Test-Path -LiteralPath $otherPath)) {
+        Set-Content -LiteralPath $otherPath -Value @(Remove-DeplydBlock $otherPath) -Encoding utf8
+    }
+
+    # @() around both: a single surviving line comes back as a string, and adding an
+    # array to a string concatenates instead of appending, collapsing the file.
+    $kept = @(Remove-DeplydBlock $profilePath)
+    New-Item -ItemType Directory -Path (Split-Path $profilePath) -Force | Out-Null
+
+    $block = @(& (Join-Path $installDir 'deplyd.exe') completions powershell)
     Set-Content -LiteralPath $profilePath -Value ($kept + $block) -Encoding utf8
 
-    Write-Host '  completion added to your PowerShell profile' -ForegroundColor DarkGray
+    Write-Host "  completion added to $profilePath" -ForegroundColor DarkGray
 } catch {
-    Write-Host '  completion could not be set up - run: deplyd completions powershell >> $PROFILE' -ForegroundColor Yellow
+    Write-Host '  completion could not be set up - run:' -ForegroundColor Yellow
+    Write-Host '    deplyd completions powershell >> $PROFILE.CurrentUserAllHosts' -ForegroundColor Yellow
 }
 
 # --- done -------------------------------------------------------------------
