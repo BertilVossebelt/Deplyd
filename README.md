@@ -55,7 +55,8 @@ irm https://raw.githubusercontent.com/BertilVossebelt/deplyd/main/install.ps1 | 
 ```
 
 The installer checks the download against the published checksums, verifies its
-provenance, and puts it on your PATH. Nothing needs root or administrator rights.
+provenance, and puts it on your PATH. Nothing needs root or administrator rights. It
+also links `dp` to it as a short name, unless something called `dp` is already there.
 
 Or take a binary from [releases](https://github.com/BertilVossebelt/deplyd/releases)
 and put it on your PATH yourself. There is no runtime to install either way.
@@ -71,11 +72,19 @@ you to create a personal access token: on an organisation repository that can ne
 owner's approval, and needing permission from someone is the thing this tool exists to
 avoid. In CI, `GITHUB_TOKEN` is used instead, so no login step is needed there.
 
-Optional, once:
+Tab completion, once:
 
 ```bash
-deplyd completions bash >> ~/.bashrc     # or zsh, fish, powershell, elvish
+deplyd completions bash >> ~/.bashrc     # or zsh, fish, elvish
 ```
+
+```powershell
+deplyd completions powershell >> $PROFILE
+```
+
+That completes commands and flags, and fills in environments and authors from what the
+repo actually has. It also defines `dp` if the installer did not, and leaves the name
+alone if something else already answers to it.
 
 Every release is signed and recorded in a public transparency log, so a download can
 be checked against the repository it claims to come from:
@@ -108,8 +117,8 @@ Run it from inside any repo.
 | `deplyd completions`    | shell completion scripts                             |
 | `deplyd check`          | prove it can only read                               |
 
-Commands shorten while they stay unambiguous, so `deplyd env` and `deplyd auth` work,
-and tab completion fills in environments and authors from what the repo actually has.
+`dp` is the same binary under a shorter name. Commands shorten too, while they stay
+unambiguous, so `dp env` and `dp auth` work.
 
 | Option                    |                                                |
 |---------------------------|------------------------------------------------|
@@ -298,6 +307,8 @@ about dependencies, which run with the same permissions deplyd does.
   any workflow it could not read.
 - `DEPLYD` means the commit shipped. A later commit rewriting the same lines is listed
   underneath rather than judged.
+- On Windows PowerShell 5.1, completion after a single `-` does not fire: that shell
+  never calls a native completer for one. `--` completes normally.
 
 ## Development
 

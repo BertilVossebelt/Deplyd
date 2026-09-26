@@ -2,6 +2,7 @@
 //! `deplyd-core`, which cannot print.
 
 mod cli;
+mod completions;
 mod init;
 mod render;
 mod stub;
@@ -63,7 +64,7 @@ fn main() -> ExitCode {
         }
         Command::Completions { shell } => {
             let mut built = <Cli as clap::CommandFactory>::command();
-            clap_complete::generate(*shell, &mut built, "deplyd", &mut std::io::stdout());
+            completions::emit(*shell, &mut built);
             return ExitCode::SUCCESS;
         }
         _ => {}
@@ -659,20 +660,20 @@ fn show_help() {
     let _ = built.print_help();
     println!();
     println!("{}PER TARGET{:#}", term::CYAN, term::CYAN);
-    println!("  PUBLISHED   built and released; no newer deploy failing or in flight");
+    println!("  DEPLYD      built and released; no newer deploy failing or in flight");
     println!("  UNCERTAIN   a newer deploy for that target did not complete");
-    println!("  SKIPPED     steps the run skipped - changes to those are not live");
+    println!("  skipped     steps the run skipped - changes to those are not live");
     println!();
     println!("{}PER PULL REQUEST{:#}", term::CYAN, term::CYAN);
-    println!("  LIVE        the commit, or an equivalent cherry-pick, is in the deployed commit");
+    println!("  DEPLYD      the commit, or an equivalent cherry-pick, is in the deployed commit");
     println!("  REVERTED    it shipped, then was undone before the deployed commit");
-    println!("  NOT LIVE    neither the commit nor an equivalent change is there");
+    println!("  NOT DEPLYD  neither the commit nor an equivalent change is there");
     println!("  NOT MERGED  still open, or closed without merging");
     println!("  NOT COVERED it changed no path any target covers; names them so you can check");
     println!();
     println!("{}EXIT CODES for deplyd pr{:#}", term::CYAN, term::CYAN);
-    println!("  0  live            3  reverted        5  no such pull request");
-    println!("  2  not live        4  not merged      6  live, but see UNCERTAIN");
+    println!("  0  deplyd          3  reverted        5  no such pull request");
+    println!("  2  not deplyd      4  not merged      6  deplyd, but see UNCERTAIN");
     println!("  1  deplyd could not run");
     println!();
     println!("Everything is detected from .github/workflows. Run \"deplyd config\" to see");

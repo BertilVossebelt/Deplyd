@@ -139,6 +139,23 @@ try {
     Copy-Item $binary (Join-Path $installDir 'deplyd.exe') -Force
 
     Write-Host "  installed  $installDir\deplyd.exe" -ForegroundColor DarkGray
+
+    # dp is the short name. A hard link costs no disk and needs no administrator on
+    # NTFS, unlike a symlink. Someone else's dp keeps the name.
+    $alias = Join-Path $installDir 'dp.exe'
+    $existing = Get-Command dp -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($existing -and $existing.Source -ne $alias) {
+        Write-Host "  dp         taken by $($existing.Source), skipped" -ForegroundColor Yellow
+    } else {
+        Remove-Item $alias -Force -ErrorAction SilentlyContinue
+        try {
+            New-Item -ItemType HardLink -Path $alias -Value (Join-Path $installDir 'deplyd.exe') -ErrorAction Stop | Out-Null
+        } catch {
+            Copy-Item (Join-Path $installDir 'deplyd.exe') $alias -Force
+        }
+        Write-Host "  dp         short name for deplyd" -ForegroundColor DarkGray
+    }
 } finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 }

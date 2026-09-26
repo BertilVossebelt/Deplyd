@@ -105,6 +105,18 @@ mv "$WORK/deplyd" "$INSTALL_DIR/deplyd"
 chmod +x "$INSTALL_DIR/deplyd"
 
 say "  installed  $INSTALL_DIR/deplyd"
+
+# dp is the short name, a symlink so it costs no disk. Someone else's dp keeps the
+# name: a tool that is already there is not ours to take.
+existing=$(command -v dp 2>/dev/null || true)
+if [ -n "$existing" ] && [ "$existing" != "$INSTALL_DIR/dp" ]; then
+    say "  dp         taken by $existing, skipped"
+else
+    rm -f "$INSTALL_DIR/dp"
+    ln -s deplyd "$INSTALL_DIR/dp" 2>/dev/null || cp "$INSTALL_DIR/deplyd" "$INSTALL_DIR/dp"
+    say "  dp         short name for deplyd"
+fi
+
 say ""
 
 # --- is it reachable --------------------------------------------------------
