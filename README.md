@@ -72,6 +72,30 @@ Then open a new terminal, and from inside any repo:
 dp status
 ```
 
+## Uninstall
+
+The installer takes back what it put there, and nothing else.
+
+**macOS and Linux**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh -s -- --uninstall
+```
+
+**Windows**, where `iex` cannot pass a switch, so the script becomes a block first
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1))) -Uninstall
+```
+
+That removes the two binaries, the PATH entry and the completion block. It asks
+before removing the GitHub CLI, which was probably here first, and leaves your
+sign-in and any `.deplyd.json` where they are. Remembered defaults and the cache stay
+too: add `--purge`, or `-Purge`, to take those as well.
+
+`dp uninstall` prints the right line for the machine you are on. Printing it is all
+it does - deplyd does not delete, which is the point of `dp check`.
+
 ## Setup
 
 The installer does all of this. You only need it if you built from source, or said no
@@ -307,12 +331,35 @@ about dependencies, which run with the same permissions deplyd does.
 
 ## Development
 
+**Running:**
+
+To try a change the way someone else would meet it, dot-source `dev-install.sh`, or
+`dev-install.ps1` on Windows:
+
+```bash
+. ./dev-install.sh
+```
+
+That builds the tree and puts the build on PATH for the current terminal, with
+completion, and writes nothing to your profile or rc file. Close the terminal and
+nothing of it is left. The dot matters: a script cannot change the PATH of the shell
+that ran it.
+
+`--persist` installs the build the way the installer would, which is what to use
+when the installer is the thing being changed, and `--revert` undoes that. Neither
+is the installer: that one only ever takes a published release, and refuses anything
+it cannot verify.
+
+**Testing:**
+
+Run the tests with:
 ```bash
 cargo test
 ```
 
 No GitHub account or network needed: fixture repositories are built with
 `GIT_ALLOW_PROTOCOL=file`, so git itself refuses ssh and https.
+
 
 Cutting a release is in [RELEASING.md](RELEASING.md).
 

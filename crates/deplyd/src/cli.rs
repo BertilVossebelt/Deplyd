@@ -105,6 +105,9 @@ pub enum Command {
     /// Prove it can only read
     Check,
 
+    /// How to remove deplyd from this machine
+    Uninstall,
+
     /// Shell completion scripts
     Completions {
         /// bash, zsh, fish, powershell or elvish
@@ -141,6 +144,7 @@ impl Command {
             Command::Init => "init",
             Command::Remember { .. } => "remember",
             Command::Check => "check",
+            Command::Uninstall => "uninstall",
             Command::Completions { .. } => "completions",
             Command::Complete { .. } => "complete",
         }

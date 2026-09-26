@@ -6,11 +6,31 @@
 # GitHub CLI if it is missing, signs you in if you are not, and turns on completion.
 # Nothing needs administrator rights.
 #
+# To undo all of that. iex cannot pass a switch, so the script becomes a block first,
+# or the variable says it instead:
+#
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1))) -Uninstall
+#   $env:DEPLYD_UNINSTALL = 1; irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1 | iex
+#
+#   -Uninstall                remove what the installer put there, and nothing else
+#   -Purge                    with -Uninstall, also remove settings and cache
+#
 #   $env:DEPLYD_INSTALL_DIR   where to put it
 #   $env:DEPLYD_VERSION       a tag to install, default the latest release
 #   $env:DEPLYD_YES           answer yes to every question, for unattended installs
+#   $env:DEPLYD_UNINSTALL     uninstall, for when a switch cannot be passed
+#   $env:DEPLYD_PURGE         with the above, also remove settings and cache
+#   $env:DEPLYD_REMOVE_GH     remove the GitHub CLI too, for an unattended uninstall
+
+param(
+    [switch] $Uninstall,
+    [switch] $Purge
+)
 
 $ErrorActionPreference = 'Stop'
+
+if ($env:DEPLYD_UNINSTALL) { $Uninstall = $true }
+if ($env:DEPLYD_PURGE) { $Uninstall = $true; $Purge = $true }
 
 $repo = 'BertilVossebelt/Deplyd'
 $installDir = if ($env:DEPLYD_INSTALL_DIR) {
@@ -41,6 +61,14 @@ function Confirm($question) {
     return ($answer -eq '' -or $answer -match '^[Yy]')
 }
 
+# For a question whose yes takes something away. DEPLYD_YES does not reach these:
+# saying yes to an install is not saying yes to removing a tool other things use.
+function Confirm-No($question) {
+    # No terminal to ask at is an answer: leave the thing alone.
+    try { $answer = Read-Host "$question [y/N]" } catch { return $false }
+    return ($answer -match '^[Yy]')
+}
+
 # A terminal keeps the PATH it was started with, so a gh installed since it opened is
 # invisible until it is reopened. After PATH, look where the installers put it.
 function Find-Gh {
@@ -63,6 +91,175 @@ function Fail($message) {
     Write-Host ''
     exit 1
 }
+
+# --- what this installer writes to a profile --------------------------------
+
+$startMarker = '# >>> deplyd completions >>>'
+$endMarker = '# <<< deplyd completions <<<'
+
+# Anything the script defines, so a copy appended before it carried markers is still
+# recognised rather than left behind next to a second one.
+$unmarked = '^\s*(if \(-not \(Get-Command dp |\$script:Deplyd|Register-ArgumentCompleter -Native -CommandName .deplyd|function script:Deplyd)'
+
+function Remove-DeplydBlock($path) {
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+
+    $kept = @()
+    $inBlock = $false
+    foreach ($line in @(Get-Content -LiteralPath $path)) {
+        if ($line -eq $startMarker) { $inBlock = $true; continue }
+        if ($line -eq $endMarker) { $inBlock = $false; continue }
+        if ($inBlock) { continue }
+        # A launcher line left by the PowerShell version, whose file is long gone.
+        if ($line -match 'deplyd' -and $line -match 'shell-init\.ps1') { continue }
+        $kept += $line
+    }
+
+    # An unmarked copy is removed whole: it runs to the end of the file, because
+    # appending is the only way it got there.
+    for ($i = 0; $i -lt $kept.Count; $i++) {
+        if ($kept[$i] -match $unmarked) {
+            $kept = if ($i -eq 0) { @() } else { @($kept | Select-Object -First $i) }
+            break
+        }
+    }
+    return $kept
+}
+
+
+# --- uninstalling -----------------------------------------------------------
+
+function Remove-Completions {
+    # The two can be the same file, and tidying it twice would say so twice.
+    $paths = @($PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost) |
+        Select-Object -Unique
+    foreach ($path in $paths) {
+        if (Test-Path -LiteralPath $path) {
+            # @() so a single surviving line stays a line rather than becoming a
+            # string the file is then set to.
+            Set-Content -LiteralPath $path -Value @(Remove-DeplydBlock $path) -Encoding utf8
+            Write-Host "  profile    tidied: $path" -ForegroundColor DarkGray
+        }
+    }
+}
+
+# Your PATH only, and only the entry this installer added.
+function Remove-FromPath {
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (-not $userPath) { return }
+
+    $kept = @($userPath -split ';' | Where-Object { $_ -ne $installDir })
+    if ($kept.Count -ne ($userPath -split ';').Count) {
+        [Environment]::SetEnvironmentVariable('Path', ($kept -join ';'), 'User')
+        Write-Host '  path       entry removed for your account' -ForegroundColor DarkGray
+    }
+}
+
+# Asked, never assumed: gh may well have been here first, and other things use it.
+function Remove-Gh {
+    $gh = Find-Gh
+    if (-not $gh) { return }
+
+    if (-not $env:DEPLYD_REMOVE_GH) {
+        if (-not (Confirm-No 'Remove the GitHub CLI as well? Other things may be using it.')) {
+            Write-Host '  gh         kept' -ForegroundColor DarkGray
+            return
+        }
+    }
+
+    $winget = Get-Command winget -CommandType Application -ErrorAction SilentlyContinue
+    if (-not $winget) {
+        Write-Host '  gh         left alone - it came from somewhere this cannot undo' -ForegroundColor Yellow
+        return
+    }
+    # Whatever winget says, the uninstall carries on: gh is not ours, and a package
+    # manager that says no about its own tool is not a reason to stop half way.
+    $code = Invoke-Native $winget.Source @('uninstall', '--id', 'GitHub.cli', '-e',
+        '--accept-source-agreements')
+    if ($code -ne 0) {
+        Write-Host '  gh         still here - remove it the way it was installed' -ForegroundColor Yellow
+        return
+    }
+
+    # Removing the tool is not ours to read as revoking access: gh keeps its sign-in
+    # in its own config, and it stays there.
+    Write-Host '  gh         removed - its sign-in is still in ~\AppData\Roaming\GitHub CLI' -ForegroundColor DarkGray
+}
+
+function Invoke-Uninstall {
+    Write-Host ''
+    Write-Host 'Removing deplyd' -ForegroundColor Cyan
+    Write-Host ''
+
+    $binary = Join-Path $installDir 'deplyd.exe'
+    $alias = Join-Path $installDir 'dp.exe'
+
+    # dp is ours only if this installer made it: a hard link to the binary beside it,
+    # or a copy of it. Someone else's dp keeps the name on the way out as going in.
+    if (Test-Path -LiteralPath $alias) {
+        $ours = $false
+        if (Test-Path -LiteralPath $binary) {
+            $ours = (Get-FileHash $alias -Algorithm SHA256).Hash -eq
+                (Get-FileHash $binary -Algorithm SHA256).Hash
+        }
+        if ($ours) {
+            Remove-Item -LiteralPath $alias -Force
+            Write-Host '  dp         removed' -ForegroundColor DarkGray
+        } else {
+            Write-Host '  dp         left alone, it is not the one this installer made' -ForegroundColor Yellow
+        }
+    }
+
+    if (Test-Path -LiteralPath $binary) {
+        Remove-Item -LiteralPath $binary -Force
+        Write-Host "  deplyd     removed from $installDir" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  deplyd     was not in $installDir" -ForegroundColor DarkGray
+    }
+
+    # Unlike the Unix default, this directory is deplyd's own, so an empty one goes
+    # too. A directory someone pointed DEPLYD_INSTALL_DIR at is left alone.
+    $default = Join-Path $env:LOCALAPPDATA 'Programs\deplyd'
+    if ($installDir -eq $default -and (Test-Path -LiteralPath $installDir)) {
+        if (-not @(Get-ChildItem -LiteralPath $installDir -Force)) {
+            Remove-Item -LiteralPath $installDir -Force
+            Write-Host '  folder     removed, it was empty' -ForegroundColor DarkGray
+        }
+    }
+
+    Remove-Completions
+    Remove-FromPath
+
+    $config = Join-Path $env:APPDATA 'deplyd'
+    if ($Purge) {
+        if (Test-Path -LiteralPath $config) {
+            Remove-Item -LiteralPath $config -Recurse -Force
+            Write-Host "  settings   removed from $config" -ForegroundColor DarkGray
+        }
+    } elseif (Test-Path -LiteralPath $config) {
+        Write-Host "  settings   kept in $config, -Purge removes them" -ForegroundColor DarkGray
+    }
+
+    # A .deplyd.json belongs to the repository it sits in, written where someone
+    # asked for it rather than put there by this script.
+    Write-Host '  repos      any .deplyd.json left where it is' -ForegroundColor DarkGray
+
+    Remove-Gh
+
+    Write-Host ''
+    Write-Host 'Done. Open a new terminal.' -ForegroundColor Green
+    Write-Host ''
+}
+
+if ($Uninstall) {
+    Invoke-Uninstall
+    return
+}
+
+# Dot-sourced by dev-install.ps1, which wants these functions and none of the work
+# below. Stopping here is all it does: there is no path that installs anything the
+# checks further down have not been through.
+if ($env:DEPLYD_SOURCE_ONLY) { return }
 
 # --- what are we running on -------------------------------------------------
 
@@ -244,38 +441,6 @@ if ((Invoke-Native $gh @('auth', 'status')) -eq 0) {
 }
 
 # --- completion -------------------------------------------------------------
-
-$startMarker = '# >>> deplyd completions >>>'
-$endMarker = '# <<< deplyd completions <<<'
-
-# Anything the script defines, so a copy appended before it carried markers is still
-# recognised rather than left behind next to a second one.
-$unmarked = '^\s*(if \(-not \(Get-Command dp |\$script:Deplyd|Register-ArgumentCompleter -Native -CommandName .deplyd|function script:Deplyd)'
-
-function Remove-DeplydBlock($path) {
-    if (-not (Test-Path -LiteralPath $path)) { return @() }
-
-    $kept = @()
-    $inBlock = $false
-    foreach ($line in @(Get-Content -LiteralPath $path)) {
-        if ($line -eq $startMarker) { $inBlock = $true; continue }
-        if ($line -eq $endMarker) { $inBlock = $false; continue }
-        if ($inBlock) { continue }
-        # A launcher line left by the PowerShell version, whose file is long gone.
-        if ($line -match 'deplyd' -and $line -match 'shell-init\.ps1') { continue }
-        $kept += $line
-    }
-
-    # An unmarked copy is removed whole: it runs to the end of the file, because
-    # appending is the only way it got there.
-    for ($i = 0; $i -lt $kept.Count; $i++) {
-        if ($kept[$i] -match $unmarked) {
-            $kept = if ($i -eq 0) { @() } else { @($kept | Select-Object -First $i) }
-            break
-        }
-    }
-    return $kept
-}
 
 try {
     # All hosts, so the VS Code terminal and the ISE get it too. Both files are

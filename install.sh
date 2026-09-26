@@ -7,9 +7,17 @@
 # GitHub CLI if it is missing, signs you in if you are not, and turns on completion.
 # Only installing the GitHub CLI on Linux needs root, and it asks first.
 #
+# To undo all of that, pass --uninstall through sh:
+#
+#   curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh -s -- --uninstall
+#
+#   --uninstall          remove what the installer put there, and nothing else
+#   --purge              with --uninstall, also remove settings and cache
+#
 #   DEPLYD_INSTALL_DIR   where to put it (default ~/.local/bin)
 #   DEPLYD_VERSION       a tag to install (default the latest release)
 #   DEPLYD_YES           answer yes to every question, for unattended installs
+#   DEPLYD_REMOVE_GH     remove the GitHub CLI too, for an unattended uninstall
 
 set -eu
 
@@ -31,6 +39,180 @@ confirm() {
     read -r answer < /dev/tty || return 1
     case "$answer" in '' | y | Y | yes | YES) return 0 ;; *) return 1 ;; esac
 }
+
+# For a question whose yes takes something away. DEPLYD_YES does not reach these:
+# saying yes to an install is not saying yes to removing a tool other things use.
+confirm_no() {
+    # /dev/tty can exist and still not open. Two things to dodge: the shell reports
+    # a redirection it could not make, so the group swallows that, and a redirection
+    # error on a special builtin - ':' is one - ends a non-interactive shell rather
+    # than failing. printf is not special, so this answers no instead of exiting.
+    { printf '' > /dev/tty; } 2>/dev/null || return 1
+    printf '%s [y/N] ' "$1" > /dev/tty
+    read -r answer < /dev/tty || return 1
+    case "$answer" in y | Y | yes | YES) return 0 ;; *) return 1 ;; esac
+}
+
+# --- what this installer writes to a shell rc -------------------------------
+
+START="# >>> deplyd completions >>>"
+END="# <<< deplyd completions <<<"
+
+case "${SHELL:-}" in
+    */zsh)  rc="$HOME/.zshrc"; shell=zsh ;;
+    */fish) rc="$HOME/.config/fish/config.fish"; shell=fish ;;
+    */bash) rc="$HOME/.bashrc"; shell=bash ;;
+    *)      rc=""; shell="" ;;
+esac
+
+# Installing and uninstalling both start by taking out what an earlier run left, so
+# reinstalling does not stack up and uninstalling leaves nothing of ours behind.
+strip_completions() {
+    { [ -n "$rc" ] && [ -f "$rc" ]; } || return 0
+    if grep -qF "$START" "$rc" 2>/dev/null; then
+        sed -i.deplyd-bak "/^$START\$/,/^$END\$/d" "$rc" && rm -f "$rc.deplyd-bak"
+    fi
+    # A copy appended before the script carried markers ran to the end of the file,
+    # appending being the only way it got there. Cut from where it starts.
+    first=$(grep -nE '^(command -v dp >/dev/null|_deplyd\(\)|_dp\(\)|complete -c deplyd)' "$rc" 2>/dev/null |
+        head -1 | cut -d: -f1)
+    if [ -n "$first" ]; then
+        head -n $((first - 1)) "$rc" > "$rc.deplyd-new" && mv "$rc.deplyd-new" "$rc"
+    fi
+}
+
+# Only the line this installer appends, matched whole, so a PATH line written by
+# hand is left where it is.
+strip_path_line() {
+    { [ -n "$rc" ] && [ -f "$rc" ]; } || return 0
+    { grep -vxF "export PATH=\"$INSTALL_DIR:\$PATH\"" "$rc" 2>/dev/null || :; } |
+        { grep -vxF "fish_add_path $INSTALL_DIR" || :; } > "$rc.deplyd-new"
+    mv "$rc.deplyd-new" "$rc"
+}
+
+# --- uninstalling -----------------------------------------------------------
+
+# dp is ours only if this installer made it: a link to the binary beside it, or a
+# copy of it. Someone else's dp keeps the name on the way out as it did going in.
+dp_is_ours() {
+    [ -e "$INSTALL_DIR/dp" ] || return 1
+    if [ -L "$INSTALL_DIR/dp" ]; then
+        case "$(readlink "$INSTALL_DIR/dp")" in
+            deplyd | "$INSTALL_DIR/deplyd") return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+    [ -f "$INSTALL_DIR/deplyd" ] && cmp -s "$INSTALL_DIR/dp" "$INSTALL_DIR/deplyd"
+}
+
+# Asked, never assumed: gh may well have been here first, and other things use it.
+remove_gh() {
+    command -v gh >/dev/null 2>&1 || return 0
+
+    if [ -z "${DEPLYD_REMOVE_GH:-}" ]; then
+        confirm_no "Remove the GitHub CLI as well? Other things may be using it." || {
+            say "  gh         kept"
+            return 0
+        }
+    fi
+
+    # Whatever happens here, the uninstall carries on: gh is not ours, and a package
+    # manager that says no about its own tool is not a reason to stop half way.
+    if [ "$(uname -s)" = "Darwin" ]; then
+        command -v brew >/dev/null 2>&1 && brew uninstall gh
+    elif command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get remove -y gh
+    elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf remove -y gh
+    elif command -v pacman >/dev/null 2>&1; then
+        sudo pacman -R --noconfirm github-cli
+    elif command -v zypper >/dev/null 2>&1; then
+        sudo zypper remove -y gh
+    else
+        false
+    fi || {
+        say "  gh         still here - remove it the way it was installed"
+        return 0
+    }
+
+    # Removing the tool is not ours to read as revoking access: gh keeps its sign-in
+    # in its own config, and it stays there.
+    say "  gh         removed - its sign-in is still in ~/.config/gh"
+}
+
+uninstall() {
+    say ""
+    say "Removing deplyd"
+    say ""
+
+    if dp_is_ours; then
+        rm -f "$INSTALL_DIR/dp"
+        say "  dp         removed"
+    elif [ -e "$INSTALL_DIR/dp" ]; then
+        say "  dp         left alone, it is not the one this installer made"
+    fi
+
+    if [ -f "$INSTALL_DIR/deplyd" ]; then
+        rm -f "$INSTALL_DIR/deplyd"
+        say "  deplyd     removed from $INSTALL_DIR"
+    else
+        say "  deplyd     was not in $INSTALL_DIR"
+    fi
+
+    # The directory itself stays. Here it defaults to ~/.local/bin, shared with
+    # everything else that installs there and never ours to have made.
+
+    if [ -n "$rc" ] && [ -f "$rc" ]; then
+        strip_completions
+        strip_path_line
+        say "  $rc tidied"
+    fi
+
+    config="${XDG_CONFIG_HOME:-$HOME/.config}/deplyd"
+    if [ -n "$PURGE" ]; then
+        # Guarded on the name, so a surprising XDG_CONFIG_HOME cannot point this
+        # anywhere but at a directory called deplyd.
+        case "$config" in
+            */deplyd)
+                if [ -d "$config" ]; then
+                    rm -rf "$config"
+                    say "  settings   removed from $config"
+                fi
+                ;;
+        esac
+    elif [ -d "$config" ]; then
+        say "  settings   kept in $config, --purge removes them"
+    fi
+
+    # A .deplyd.json belongs to the repository it sits in, written where someone
+    # asked for it rather than put there by this script.
+    say "  repos      any .deplyd.json left where it is"
+
+    remove_gh
+
+    say ""
+    say "Done. Open a new terminal."
+    say ""
+    exit 0
+}
+
+UNINSTALL=""
+PURGE=""
+for argument in "$@"; do
+    case "$argument" in
+        --uninstall) UNINSTALL=1 ;;
+        --purge)     UNINSTALL=1; PURGE=1 ;;
+        *) fail "Unknown option: $argument
+Usage: install.sh [--uninstall] [--purge]" ;;
+    esac
+done
+
+[ -n "$UNINSTALL" ] && uninstall
+
+# Sourced by dev-install.sh, which wants the functions above and none of the work
+# below. Stopping here is all it does: there is no path that installs anything the
+# checks further down have not been through.
+[ -n "${DEPLYD_SOURCE_ONLY:-}" ] && return 0
 
 need curl
 need tar
@@ -206,30 +388,11 @@ fi
 
 # --- completion -------------------------------------------------------------
 
-START="# >>> deplyd completions >>>"
-END="# <<< deplyd completions <<<"
-
-case "${SHELL:-}" in
-    */zsh)  rc="$HOME/.zshrc"; shell=zsh ;;
-    */fish) rc="$HOME/.config/fish/config.fish"; shell=fish ;;
-    */bash) rc="$HOME/.bashrc"; shell=bash ;;
-    *)      rc=""; shell="" ;;
-esac
-
 if [ -n "$rc" ]; then
     mkdir -p "$(dirname "$rc")"
     [ -f "$rc" ] || : > "$rc"
     # Drop a previous block before writing this one, so reinstalling does not stack up.
-    if grep -qF "$START" "$rc" 2>/dev/null; then
-        sed -i.deplyd-bak "/^$START\$/,/^$END\$/d" "$rc" && rm -f "$rc.deplyd-bak"
-    fi
-    # A copy appended before the script carried markers ran to the end of the file,
-    # appending being the only way it got there. Cut from where it starts.
-    first=$(grep -nE '^(command -v dp >/dev/null|_deplyd\(\)|_dp\(\)|complete -c deplyd)' "$rc" 2>/dev/null |
-        head -1 | cut -d: -f1)
-    if [ -n "$first" ]; then
-        head -n $((first - 1)) "$rc" > "$rc.deplyd-new" && mv "$rc.deplyd-new" "$rc"
-    fi
+    strip_completions
     # The markers come from the binary now, so they arrive with the script.
     "$INSTALL_DIR/deplyd" completions "$shell" >> "$rc"
     say "  completion added to $rc"

@@ -62,6 +62,10 @@ fn main() -> ExitCode {
             show_self_check();
             return ExitCode::SUCCESS;
         }
+        Command::Uninstall => {
+            show_uninstall();
+            return ExitCode::SUCCESS;
+        }
         Command::Completions { shell } => {
             let mut built = <Cli as clap::CommandFactory>::command();
             completions::emit(*shell, &mut built);
@@ -689,6 +693,36 @@ fn show_help() {
 }
 
 /// `check`: what the gateway allows, and whether this binary still obeys it.
+/// A signpost, not a deed. deplyd never deletes - `check` says so and the build
+/// guard enforces it - so removing it stays the installer's job, and this prints
+/// the line that does it.
+fn show_uninstall() {
+    println!();
+    println!("{}Removing deplyd{:#}", term::CYAN, term::CYAN);
+    println!();
+    println!("  The installer takes back what it put there. Run:");
+    println!();
+
+    let repo = "https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main";
+    if cfg!(windows) {
+        println!("  & ([scriptblock]::Create((irm {repo}/install.ps1))) -Uninstall");
+        println!();
+        println!("  Add -Purge to take the remembered defaults and the cache too.");
+    } else {
+        println!("  curl -fsSL {repo}/install.sh | sh -s -- --uninstall");
+        println!();
+        println!("  Add --purge to take the remembered defaults and the cache too.");
+    }
+
+    println!();
+    println!(
+        "  Settings live in {}",
+        deplyd_core::settings::config_directory().display()
+    );
+    println!("  deplyd does not delete, so it cannot do this itself. See: deplyd check");
+    println!();
+}
+
 fn show_self_check() {
     println!();
     println!("{}deplyd read-only self-check{:#}", term::CYAN, term::CYAN);
