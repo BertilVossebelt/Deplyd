@@ -219,13 +219,6 @@ impl GitHub {
         Some(parsed.tag_name)
     }
 
-    /// The tag of the newest published release, for the update check.
-    pub fn latest_release(&self) -> Option<String> {
-        let body = self.get(&Route::LatestRelease).ok()?;
-        let parsed: Release = serde_json::from_str(&body).ok()?;
-        Some(parsed.tag_name)
-    }
-
     /// Recent runs of one workflow.
     pub fn runs_for_workflow(&self, workflow_file: &str) -> Result<Vec<Run>, HttpError> {
         let body = self.get(&Route::WorkflowRuns {
