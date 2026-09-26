@@ -12,6 +12,15 @@
 #   -Uninstall                remove what the installer put there, and nothing else
 #   -Purge                    with -Uninstall, also remove settings and cache
 #
+# To undo all of that. iex cannot pass a switch, so the script becomes a block first,
+# or the variable says it instead:
+#
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1))) -Uninstall
+#   $env:DEPLYD_UNINSTALL = 1; irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1 | iex
+#
+#   -Uninstall                remove what the installer put there, and nothing else
+#   -Purge                    with -Uninstall, also remove settings and cache
+#
 #   $env:DEPLYD_INSTALL_DIR   where to put it
 #   $env:DEPLYD_VERSION       a tag to install, default the latest release
 #   $env:DEPLYD_YES           answer yes to every question, for unattended installs

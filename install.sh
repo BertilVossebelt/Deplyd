@@ -9,6 +9,13 @@
 #   --uninstall          remove what the installer put there, and nothing else
 #   --purge              with --uninstall, also remove settings and cache
 #
+# To undo all of that, pass --uninstall through sh:
+#
+#   curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh -s -- --uninstall
+#
+#   --uninstall          remove what the installer put there, and nothing else
+#   --purge              with --uninstall, also remove settings and cache
+#
 #   DEPLYD_INSTALL_DIR   where to put it (default ~/.local/bin)
 #   DEPLYD_VERSION       a tag to install (default the latest release)
 #   DEPLYD_YES           answer yes to every question, for unattended installs
