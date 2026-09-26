@@ -35,6 +35,10 @@ pub struct Options {
     #[arg(long = "anyone", global = true, conflicts_with = "author")]
     pub anyone: bool,
 
+    /// How far back to read per target, default 200
+    #[arg(short = 'D', long = "depth", global = true, value_name = "N")]
+    pub depth: Option<u32>,
+
     /// How many changes to list
     #[arg(
         short = 'T',

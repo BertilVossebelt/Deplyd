@@ -37,6 +37,8 @@ pub struct Settings {
     /// Seconds between looks, for `watch`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub watch_every: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth: Option<u32>,
 }
 
 impl Settings {

@@ -166,6 +166,7 @@ unambiguous, so `dp env` and `dp auth` work.
 | `--anyone`                | every author, not just yours                   |
 | `-T, --take <n>`          | how many to list per list, default 10          |
 | `-S, --skip <n>`          | skip this many, for paging                     |
+| `-D, --depth <n>`         | how far back to read per target, default 200   |
 | `--repo-path <path>`      | repo to inspect, default the current directory |
 | `-J, --json`              | machine-readable output, for `status` and `pr` |
 | `-F, --force`             | let `init` rewrite a file that already exists  |
@@ -177,7 +178,12 @@ deplyd remember author "Ada"
 deplyd remember environment staging
 deplyd remember repo /path/to/repo
 deplyd remember every 5m
+deplyd remember depth 500
 ```
+
+Depth is how far back each target is read. The default of 200 keeps a long history
+from being walked on every run; when it stops early the count is shown as `355+` and
+the report says so, rather than presenting a ceiling as a total.
 
 ## Watching
 

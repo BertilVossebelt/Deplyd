@@ -297,11 +297,25 @@ fn link_for(entry: &deplyd_core::report::Entry, web: &WebBase) -> String {
 }
 
 /// The default report: an author's changes, deployd and pending.
-pub fn status(context: &Context, targets: &TargetSet, report: &StatusReport, web: &WebBase) {
+pub fn status(
+    context: &Context,
+    targets: &TargetSet,
+    report: &StatusReport,
+    web: &WebBase,
+    depth: usize,
+) {
     let mark = term::glyphs();
     // Not "PRs": commits pushed straight to a branch appear here too.
     let whose = context.author.as_deref().unwrap_or("everyone");
     let heading = format!("deplyd changes  {}  {whose}", mark.dot);
+
+    // A capped read stopped where it was told to, so the count is a floor. The
+    // plus sign is the difference between "355" and "at least 355".
+    let total = format!(
+        "{}{}",
+        report.live.len(),
+        if report.capped { "+" } else { "" }
+    );
 
     if report.live.is_empty() {
         println!("{CYAN}{heading}{CYAN:#}  {DIM}none{DIM:#}");
@@ -309,8 +323,7 @@ pub fn status(context: &Context, targets: &TargetSet, report: &StatusReport, web
     }
     if report.page.is_empty() {
         println!(
-            "{CYAN}{heading}{CYAN:#}  {DIM}{} in total, nothing left after skipping {}{DIM:#}",
-            report.live.len(),
+            "{CYAN}{heading}{CYAN:#}  {DIM}{total} in total, nothing left after skipping {}{DIM:#}",
             report.skip
         );
         return;
@@ -318,10 +331,7 @@ pub fn status(context: &Context, targets: &TargetSet, report: &StatusReport, web
 
     let first = report.skip + 1;
     let last = report.skip + report.page.len();
-    println!(
-        "{CYAN}{heading}{CYAN:#}  {DIM}{first}-{last} of {}{DIM:#}",
-        report.live.len()
-    );
+    println!("{CYAN}{heading}{CYAN:#}  {DIM}{first}-{last} of {total}{DIM:#}");
     println!();
 
     let label_width = targets.label_width();
@@ -371,9 +381,17 @@ pub fn status(context: &Context, targets: &TargetSet, report: &StatusReport, web
 
     if last < report.live.len() {
         println!(
-            "  {DIM}{} older  {}  --skip {last}{DIM:#}",
+            "  {DIM}{}{} older  {}  --skip {last}{DIM:#}",
             report.live.len() - last,
+            if report.capped { "+" } else { "" },
             mark.dot
+        );
+    }
+
+    if report.capped {
+        println!();
+        println!(
+            "{DIM}  Stopped after {depth} commits per target. Read further with --depth.{DIM:#}"
         );
     }
 
