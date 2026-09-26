@@ -192,9 +192,25 @@ jobs:
         run: sha256sum deplyd-* > SHA256SUMS
 
       - name: Attest provenance
+        id: attest
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: "artifacts/deplyd-*"
+
+      # Published with the release so the installer can check a download against it
+      # without an account or a token of any kind. One file covers every archive.
+      - name: Publish the attestation bundle
+        run: cp "${{ steps.attest.outputs.bundle-path }}" artifacts/attestation.json
+
+      # The exact check the installer runs, with no token in the environment. A
+      # release that would not verify fails here rather than on someone's machine.
+      - name: Check the bundle verifies every archive
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          for archive in artifacts/deplyd-*; do
+            gh attestation verify "$archive" --repo "$REPO" --bundle artifacts/attestation.json
+          done
 
       - name: Publish
         env:
@@ -229,6 +245,12 @@ jobs:
             echo
             echo '```'
             echo "gh attestation verify <file> --repo $REPO"
+            echo '```'
+            echo
+            echo "Or without signing in, against the bundle published here:"
+            echo
+            echo '```'
+            echo "gh attestation verify <file> --repo $REPO --bundle attestation.json"
             echo '```'
             echo
             echo '`SHA256SUMS` lists the checksums.'
