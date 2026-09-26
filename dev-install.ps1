@@ -17,7 +17,12 @@
 param(
     [switch] $Release,
     [switch] $Persist,
-    [switch] $Revert
+    [switch] $Revert,
+
+    # PowerShell spells a switch with one dash, so --persist binds to nothing.
+    # Caught here rather than ignored in silence, which looks like it worked.
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]] $Rest
 )
 
 # Dot-sourced, so anything set here is set in the caller's session. Put back what
@@ -28,6 +33,14 @@ $deplydDotSourced = $MyInvocation.InvocationName -eq '.'
 try {
     $ErrorActionPreference = 'Stop'
     $root = $PSScriptRoot
+
+    if ($Rest) {
+        Write-Host ''
+        Write-Host "Unknown option: $($Rest -join ' ')" -ForegroundColor Red
+        Write-Host '  This is PowerShell: -Release, -Persist, -Revert, one dash each.'
+        Write-Host ''
+        return
+    }
 
     if (-not $deplydDotSourced -and -not ($Persist -or $Revert)) {
         Write-Host ''
