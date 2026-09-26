@@ -65,10 +65,54 @@ else
 fi
 
 ARCHIVE="deplyd-$TAG-$TARGET.tar.gz"
+BUNDLE="attestation.json"
 BASE="https://github.com/$REPO/releases/download/$TAG"
 
 say ""
 say "deplyd $TAG for $TARGET"
+
+# --- the GitHub CLI ---------------------------------------------------------
+
+# Before the download rather than after it: gh is what checks the download, and a
+# binary whose provenance cannot be checked is not one to install. Only the tool is
+# wanted here. The check runs against a bundle published with the release, so it needs
+# no account and no token, and signing in can wait until deplyd is on the disk.
+
+say ""
+
+install_gh() {
+    if [ "$(uname -s)" = "Darwin" ]; then
+        command -v brew >/dev/null 2>&1 || return 1
+        brew install gh
+        return $?
+    fi
+    # Root, so it asks before it does this and takes no for an answer.
+    if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update && sudo apt-get install -y gh
+    elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y gh
+    elif command -v pacman >/dev/null 2>&1; then
+        sudo pacman -S --noconfirm github-cli
+    elif command -v zypper >/dev/null 2>&1; then
+        sudo zypper install -y gh
+    else
+        return 1
+    fi
+}
+
+if ! command -v gh >/dev/null 2>&1; then
+    if confirm "deplyd reads GitHub through the GitHub CLI, which is not installed. Install it?"; then
+        install_gh || true
+    fi
+fi
+
+command -v gh >/dev/null 2>&1 || fail "The GitHub CLI is needed, to check this download and to run deplyd.
+Install it from https://cli.github.com, then run this again."
+
+# gh learned to verify attestations in 2.49. An older one cannot check, which is not
+# the same answer as a check that failed, so say which it is.
+gh attestation verify --help >/dev/null 2>&1 ||
+    fail "This gh cannot check provenance - that arrived in 2.49. Update it, then run this again."
 
 # --- download ---------------------------------------------------------------
 
@@ -81,28 +125,42 @@ curl -fsSL "$BASE/$ARCHIVE" -o "$WORK/$ARCHIVE" ||
 
 # --- check it is what was published ----------------------------------------
 
-if curl -fsSL "$BASE/SHA256SUMS" -o "$WORK/SHA256SUMS" 2>/dev/null; then
-    expected=$(grep " $ARCHIVE\$" "$WORK/SHA256SUMS" | awk '{print $1}')
-    if [ -n "$expected" ]; then
-        if command -v sha256sum >/dev/null 2>&1; then
-            actual=$(sha256sum "$WORK/$ARCHIVE" | awk '{print $1}')
-        else
-            actual=$(shasum -a 256 "$WORK/$ARCHIVE" | awk '{print $1}')
-        fi
-        [ "$expected" = "$actual" ] || fail "Checksum mismatch. Not installing."
-        say "  checksum   ok"
-    fi
+# Every release publishes SHA256SUMS, so a missing file or entry means this download
+# cannot be shown to be the published one. Refuse rather than install it anyway.
+curl -fsSL "$BASE/SHA256SUMS" -o "$WORK/SHA256SUMS" ||
+    fail "Could not fetch SHA256SUMS for $TAG, so the download cannot be checked. Not installing."
+
+expected=$(grep " $ARCHIVE\$" "$WORK/SHA256SUMS" | awk '{print $1}')
+[ -n "$expected" ] || fail "SHA256SUMS has no entry for $ARCHIVE. Not installing."
+
+if command -v sha256sum >/dev/null 2>&1; then
+    actual=$(sha256sum "$WORK/$ARCHIVE" | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+    actual=$(shasum -a 256 "$WORK/$ARCHIVE" | awk '{print $1}')
+else
+    fail "Neither sha256sum nor shasum is here, so the download cannot be checked. Not installing."
 fi
 
+[ "$expected" = "$actual" ] || fail "Checksum mismatch. Not installing."
+say "  checksum   ok"
+
 # Signed through Sigstore and recorded in a public log, so this says the binary came
-# from that repository's release workflow and not from somewhere else.
-if command -v gh >/dev/null 2>&1; then
-    if gh attestation verify "$WORK/$ARCHIVE" --repo "$REPO" >/dev/null 2>&1; then
-        say "  provenance ok"
-    else
-        say "  provenance could not be verified - continuing, but be aware"
-    fi
+# from that repository's release workflow and not from somewhere else. The bundle is
+# published with the release, which is what makes this check cost nothing to run: no
+# account, no token, nothing to set up first.
+if curl -fsSL "$BASE/$BUNDLE" -o "$WORK/$BUNDLE" 2>/dev/null; then
+    gh attestation verify "$WORK/$ARCHIVE" --repo "$REPO" --bundle "$WORK/$BUNDLE" >/dev/null 2>&1 ||
+        fail "Provenance check failed: $ARCHIVE is not what $REPO's release workflow built. Not installing."
+elif gh auth status >/dev/null 2>&1; then
+    # The early releases published no bundle. Ask GitHub for the attestation instead,
+    # which works but wants the sign-in those releases could assume.
+    gh attestation verify "$WORK/$ARCHIVE" --repo "$REPO" >/dev/null 2>&1 ||
+        fail "Provenance check failed: $ARCHIVE is not what $REPO's release workflow built. Not installing."
+else
+    fail "$TAG published no attestation bundle, so checking it means asking GitHub.
+Sign in with: gh auth login, or install the latest release, which carries its own."
 fi
+say "  provenance ok"
 
 # --- install ----------------------------------------------------------------
 
@@ -133,48 +191,17 @@ case ":$PATH:" in
     *) PATH="$INSTALL_DIR:$PATH"; export PATH; NEEDS_PATH=1 ;;
 esac
 
-# --- the GitHub CLI ---------------------------------------------------------
+# --- signing in -------------------------------------------------------------
 
 say ""
 
-install_gh() {
-    if [ "$(uname -s)" = "Darwin" ]; then
-        command -v brew >/dev/null 2>&1 || return 1
-        brew install gh
-        return $?
-    fi
-    # Root, so it asks before it does this and takes no for an answer.
-    if command -v apt-get >/dev/null 2>&1; then
-        sudo apt-get update && sudo apt-get install -y gh
-    elif command -v dnf >/dev/null 2>&1; then
-        sudo dnf install -y gh
-    elif command -v pacman >/dev/null 2>&1; then
-        sudo pacman -S --noconfirm github-cli
-    elif command -v zypper >/dev/null 2>&1; then
-        sudo zypper install -y gh
-    else
-        return 1
-    fi
-}
-
-if ! command -v gh >/dev/null 2>&1; then
-    if confirm "deplyd reads GitHub through the GitHub CLI, which is not installed. Install it?"; then
-        install_gh || true
-    fi
-fi
-
-if command -v gh >/dev/null 2>&1; then
-    if gh auth status >/dev/null 2>&1; then
-        say "  github     signed in"
-    elif confirm "You are not signed in to GitHub. Sign in now?"; then
-        # Interactive on purpose: a device flow against access you already have.
-        gh auth login < /dev/tty || true
-    else
-        say "  github     not signed in - run: gh auth login"
-    fi
+if gh auth status >/dev/null 2>&1; then
+    say "  github     signed in"
+elif confirm "You are not signed in to GitHub. Sign in now?"; then
+    # Interactive on purpose: a device flow against access you already have.
+    gh auth login < /dev/tty || true
 else
-    say "The GitHub CLI is needed. Install it, then run: gh auth login"
-    say "  https://cli.github.com"
+    say "  github     not signed in - run: gh auth login"
 fi
 
 # --- completion -------------------------------------------------------------

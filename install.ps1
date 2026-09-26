@@ -87,10 +87,39 @@ if ($env:DEPLYD_VERSION) {
 }
 
 $archive = "deplyd-$tag-$target.zip"
+$bundle = 'attestation.json'
 $base = "https://github.com/$repo/releases/download/$tag"
 
 Write-Host ''
 Write-Host "deplyd $tag for $target" -ForegroundColor Cyan
+
+# --- the GitHub CLI ---------------------------------------------------------
+
+# Before the download rather than after it: gh is what checks the download, and a
+# binary whose provenance cannot be checked is not one to install. Only the tool is
+# wanted here. The check runs against a bundle published with the release, so it needs
+# no account and no token, and signing in can wait until deplyd is on the disk.
+
+Write-Host ''
+
+$gh = Find-Gh
+if (-not $gh) {
+    $winget = Get-Command winget -CommandType Application -ErrorAction SilentlyContinue
+    if ($winget -and (Confirm 'deplyd reads GitHub through the GitHub CLI, which is not installed. Install it?')) {
+        Invoke-Native $winget.Source @('install', '--id', 'GitHub.cli', '-e', '--source', 'winget',
+            '--accept-package-agreements', '--accept-source-agreements') | Out-Null
+        $gh = Find-Gh
+    }
+}
+if (-not $gh) {
+    Fail "The GitHub CLI is needed, to check this download and to run deplyd.`nInstall it from https://cli.github.com, then run this again."
+}
+
+# gh learned to verify attestations in 2.49. An older one cannot check, which is not
+# the same answer as a check that failed, so say which it is.
+if ((Invoke-Native $gh @('attestation', 'verify', '--help')) -ne 0) {
+    Fail 'This gh cannot check provenance - that arrived in 2.49. Update it, then run this again.'
+}
 
 # --- download ---------------------------------------------------------------
 
@@ -107,33 +136,56 @@ try {
 
     # --- check it is what was published ------------------------------------
 
+    # Every release publishes SHA256SUMS, so a missing file or entry means this
+    # download cannot be shown to be the published one. Refuse rather than install
+    # it anyway. The fetch is the only part that throws, so only it is caught.
+    $sumsPath = Join-Path $work 'SHA256SUMS'
+    $sumsError = ''
     try {
-        $sumsPath = Join-Path $work 'SHA256SUMS'
         Invoke-WebRequest "$base/SHA256SUMS" -OutFile $sumsPath -UseBasicParsing
-        $line = Get-Content $sumsPath | Where-Object { $_ -match [regex]::Escape($archive) + '$' }
-        if ($line) {
-            $expected = ($line -split '\s+')[0]
-            $actual = (Get-FileHash $archivePath -Algorithm SHA256).Hash.ToLower()
-            if ($expected.ToLower() -ne $actual) {
-                Fail 'Checksum mismatch. Not installing.'
-            }
-            Write-Host '  checksum   ok' -ForegroundColor DarkGray
-        }
     } catch {
-        Write-Host '  checksum   could not be checked' -ForegroundColor Yellow
+        $sumsError = $_.Exception.Message
+    }
+    if ($sumsError) {
+        Fail "Could not fetch SHA256SUMS for $tag ($sumsError), so the download cannot be checked. Not installing."
     }
 
+    $line = Get-Content $sumsPath |
+        Where-Object { $_ -match [regex]::Escape($archive) + '$' } |
+        Select-Object -First 1
+    if (-not $line) { Fail "SHA256SUMS has no entry for $archive. Not installing." }
+
+    $expected = ($line -split '\s+')[0]
+    $actual = (Get-FileHash $archivePath -Algorithm SHA256).Hash.ToLower()
+    if ($expected.ToLower() -ne $actual) { Fail 'Checksum mismatch. Not installing.' }
+    Write-Host '  checksum   ok' -ForegroundColor DarkGray
+
     # Signed through Sigstore and recorded in a public log, so this says the binary
-    # came from that repository's release workflow rather than somewhere else.
-    $gh = Find-Gh
-    if ($gh) {
-        $code = Invoke-Native $gh @('attestation', 'verify', $archivePath, '--repo', $repo)
-        if ($code -eq 0) {
-            Write-Host '  provenance ok' -ForegroundColor DarkGray
-        } else {
-            Write-Host '  provenance could not be verified - continuing, but be aware' -ForegroundColor Yellow
-        }
+    # came from that repository's release workflow rather than somewhere else. The
+    # bundle is published with the release, which is what makes this check cost
+    # nothing to run: no account, no token, nothing to set up first.
+    $bundlePath = Join-Path $work $bundle
+    $haveBundle = $true
+    try {
+        Invoke-WebRequest "$base/$bundle" -OutFile $bundlePath -UseBasicParsing
+    } catch {
+        $haveBundle = $false
     }
+
+    $badProvenance = "Provenance check failed: $archive is not what $repo's release workflow built. Not installing."
+    if ($haveBundle) {
+        if ((Invoke-Native $gh @('attestation', 'verify', $archivePath, '--repo', $repo,
+            '--bundle', $bundlePath)) -ne 0) { Fail $badProvenance }
+    } elseif ((Invoke-Native $gh @('auth', 'status')) -eq 0) {
+        # The early releases published no bundle. Ask GitHub for the attestation
+        # instead, which works but wants the sign-in those releases could assume.
+        if ((Invoke-Native $gh @('attestation', 'verify', $archivePath, '--repo', $repo)) -ne 0) {
+            Fail $badProvenance
+        }
+    } else {
+        Fail "$tag published no attestation bundle, so checking it means asking GitHub.`nSign in with: gh auth login, or install the latest release, which carries its own."
+    }
+    Write-Host '  provenance ok' -ForegroundColor DarkGray
 
     # --- install -----------------------------------------------------------
 
@@ -178,35 +230,17 @@ if (($userPath -split ';') -notcontains $installDir) {
 }
 $env:Path = "$env:Path;$installDir"
 
-# --- the GitHub CLI ---------------------------------------------------------
+# --- signing in -------------------------------------------------------------
 
 Write-Host ''
 
-$gh = Find-Gh
-if (-not $gh) {
-    $winget = Get-Command winget -CommandType Application -ErrorAction SilentlyContinue
-    if ($winget) {
-        if (Confirm 'deplyd reads GitHub through the GitHub CLI, which is not installed. Install it?') {
-            Invoke-Native $winget.Source @('install', '--id', 'GitHub.cli', '-e', '--source', 'winget',
-                '--accept-package-agreements', '--accept-source-agreements') | Out-Null
-            $gh = Find-Gh
-        }
-    }
-    if (-not $gh) {
-        Write-Host 'The GitHub CLI is needed. Install it, then run: gh auth login' -ForegroundColor Yellow
-        Write-Host '  https://cli.github.com' -ForegroundColor DarkGray
-    }
-}
-
-if ($gh) {
-    if ((Invoke-Native $gh @('auth', 'status')) -eq 0) {
-        Write-Host '  github     signed in' -ForegroundColor DarkGray
-    } elseif (Confirm 'You are not signed in to GitHub. Sign in now?') {
-        # Interactive on purpose: it is a device flow against access you already have.
-        & $gh auth login
-    } else {
-        Write-Host '  github     not signed in - run: gh auth login' -ForegroundColor Yellow
-    }
+if ((Invoke-Native $gh @('auth', 'status')) -eq 0) {
+    Write-Host '  github     signed in' -ForegroundColor DarkGray
+} elseif (Confirm 'You are not signed in to GitHub. Sign in now?') {
+    # Interactive on purpose: it is a device flow against access you already have.
+    & $gh auth login
+} else {
+    Write-Host '  github     not signed in - run: gh auth login' -ForegroundColor Yellow
 }
 
 # --- completion -------------------------------------------------------------
