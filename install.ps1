@@ -2,12 +2,13 @@
 #
 #   irm https://raw.githubusercontent.com/BertilVossebelt/deplyd/main/install.ps1 | iex
 #
-# Downloads the release for your platform, checks it against the published
-# checksums, verifies its provenance when gh is available, and puts the binary on
-# your PATH. Nothing needs administrator rights: it installs for you alone.
+# Downloads the release, checks it, puts deplyd and dp on your PATH, installs the
+# GitHub CLI if it is missing, signs you in if you are not, and turns on completion.
+# Nothing needs administrator rights.
 #
 #   $env:DEPLYD_INSTALL_DIR   where to put it
 #   $env:DEPLYD_VERSION       a tag to install, default the latest release
+#   $env:DEPLYD_YES           answer yes to every question, for unattended installs
 
 $ErrorActionPreference = 'Stop'
 
@@ -18,9 +19,8 @@ $installDir = if ($env:DEPLYD_INSTALL_DIR) {
     Join-Path $env:LOCALAPPDATA 'Programs\deplyd'
 }
 
-# A non-zero exit from gh is an answer here, not a failure. pwsh 7.4 and later turn
-# one into a terminating error under the Stop preference, which would end the
-# installer instead of falling through to "could not be verified".
+# A non-zero exit from a tool is an answer here, not a failure. pwsh 7.4 and later turn
+# one into a terminating error under the Stop preference, which would end the installer.
 function Invoke-Native {
     param([string] $Path, [string[]] $Arguments)
 
@@ -33,6 +33,12 @@ function Invoke-Native {
     } finally {
         $ErrorActionPreference = $previousPreference
     }
+}
+
+function Confirm($question) {
+    if ($env:DEPLYD_YES) { return $true }
+    $answer = Read-Host "$question [Y/n]"
+    return ($answer -eq '' -or $answer -match '^[Yy]')
 }
 
 # A terminal keeps the PATH it was started with, so a gh installed since it opened is
@@ -83,6 +89,7 @@ if ($env:DEPLYD_VERSION) {
 $archive = "deplyd-$tag-$target.zip"
 $base = "https://github.com/$repo/releases/download/$tag"
 
+Write-Host ''
 Write-Host "deplyd $tag for $target" -ForegroundColor Cyan
 
 # --- download ---------------------------------------------------------------
@@ -116,9 +123,8 @@ try {
         Write-Host '  checksum   could not be checked' -ForegroundColor Yellow
     }
 
-    # deplyd needs gh anyway, so this costs nobody an extra tool. Signed through
-    # Sigstore and recorded in a public log, so it says the binary came from that
-    # repository's release workflow rather than from somewhere else.
+    # Signed through Sigstore and recorded in a public log, so this says the binary
+    # came from that repository's release workflow rather than somewhere else.
     $gh = Find-Gh
     if ($gh) {
         $code = Invoke-Native $gh @('attestation', 'verify', $archivePath, '--repo', $repo)
@@ -136,9 +142,10 @@ try {
     if (-not (Test-Path $binary)) { Fail 'The archive did not contain deplyd.exe.' }
 
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-    Copy-Item $binary (Join-Path $installDir 'deplyd.exe') -Force
+    $installed = Join-Path $installDir 'deplyd.exe'
+    Copy-Item $binary $installed -Force
 
-    Write-Host "  installed  $installDir\deplyd.exe" -ForegroundColor DarkGray
+    Write-Host "  installed  $installed" -ForegroundColor DarkGray
 
     # dp is the short name. A hard link costs no disk and needs no administrator on
     # NTFS, unlike a symlink. Someone else's dp keeps the name.
@@ -150,30 +157,96 @@ try {
     } else {
         Remove-Item $alias -Force -ErrorAction SilentlyContinue
         try {
-            New-Item -ItemType HardLink -Path $alias -Value (Join-Path $installDir 'deplyd.exe') -ErrorAction Stop | Out-Null
+            New-Item -ItemType HardLink -Path $alias -Value $installed -ErrorAction Stop | Out-Null
         } catch {
-            Copy-Item (Join-Path $installDir 'deplyd.exe') $alias -Force
+            Copy-Item $installed $alias -Force
         }
-        Write-Host "  dp         short name for deplyd" -ForegroundColor DarkGray
+        Write-Host '  dp         short name for deplyd' -ForegroundColor DarkGray
     }
 } finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# --- is it reachable --------------------------------------------------------
+# --- PATH -------------------------------------------------------------------
+
+# Your PATH only, never the machine's, so this needs no administrator and affects
+# nobody else who uses this computer.
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if (($userPath -split ';') -notcontains $installDir) {
+    [Environment]::SetEnvironmentVariable('Path', "$userPath;$installDir", 'User')
+    Write-Host '  path       added for your account' -ForegroundColor DarkGray
+}
+$env:Path = "$env:Path;$installDir"
+
+# --- the GitHub CLI ---------------------------------------------------------
 
 Write-Host ''
-$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if ($userPath -split ';' -contains $installDir) {
-    Write-Host "Run 'deplyd check' to see what it is allowed to do."
-} else {
-    # Your PATH only, never the machine's, so this needs no administrator and
-    # affects nobody else who uses this computer.
-    [Environment]::SetEnvironmentVariable('Path', "$userPath;$installDir", 'User')
-    $env:Path = "$env:Path;$installDir"
-    Write-Host "Added $installDir to your PATH."
-    Write-Host 'Open a new terminal, then run: deplyd check'
+
+$gh = Find-Gh
+if (-not $gh) {
+    $winget = Get-Command winget -CommandType Application -ErrorAction SilentlyContinue
+    if ($winget) {
+        if (Confirm 'deplyd reads GitHub through the GitHub CLI, which is not installed. Install it?') {
+            Invoke-Native $winget.Source @('install', '--id', 'GitHub.cli', '-e', '--source', 'winget',
+                '--accept-package-agreements', '--accept-source-agreements') | Out-Null
+            $gh = Find-Gh
+        }
+    }
+    if (-not $gh) {
+        Write-Host 'The GitHub CLI is needed. Install it, then run: gh auth login' -ForegroundColor Yellow
+        Write-Host '  https://cli.github.com' -ForegroundColor DarkGray
+    }
 }
 
+if ($gh) {
+    if ((Invoke-Native $gh @('auth', 'status')) -eq 0) {
+        Write-Host '  github     signed in' -ForegroundColor DarkGray
+    } elseif (Confirm 'You are not signed in to GitHub. Sign in now?') {
+        # Interactive on purpose: it is a device flow against access you already have.
+        & $gh auth login
+    } else {
+        Write-Host '  github     not signed in - run: gh auth login' -ForegroundColor Yellow
+    }
+}
+
+# --- completion -------------------------------------------------------------
+
+$startMarker = '# >>> deplyd completions >>>'
+$endMarker = '# <<< deplyd completions <<<'
+
+try {
+    $profilePath = $PROFILE.CurrentUserAllHosts
+    New-Item -ItemType Directory -Path (Split-Path $profilePath) -Force | Out-Null
+
+    $lines = if (Test-Path -LiteralPath $profilePath) {
+        @(Get-Content -LiteralPath $profilePath)
+    } else {
+        @()
+    }
+
+    # Drop our own previous block, and any launcher line left by the PowerShell
+    # version of deplyd, whose file no longer exists.
+    $kept = @()
+    $inBlock = $false
+    foreach ($line in $lines) {
+        if ($line -eq $startMarker) { $inBlock = $true; continue }
+        if ($line -eq $endMarker) { $inBlock = $false; continue }
+        if ($inBlock) { continue }
+        if ($line -match 'deplyd' -and $line -match 'shell-init\.ps1') { continue }
+        $kept += $line
+    }
+
+    $block = @($startMarker) + @(& (Join-Path $installDir 'deplyd.exe') completions powershell) + @($endMarker)
+    Set-Content -LiteralPath $profilePath -Value ($kept + $block) -Encoding utf8
+
+    Write-Host '  completion added to your PowerShell profile' -ForegroundColor DarkGray
+} catch {
+    Write-Host '  completion could not be set up - run: deplyd completions powershell >> $PROFILE' -ForegroundColor Yellow
+}
+
+# --- done -------------------------------------------------------------------
+
 Write-Host ''
-Write-Host 'deplyd reads GitHub as you. If you have not already:  gh auth login' -ForegroundColor DarkGray
+Write-Host 'Done. Open a new terminal, then from inside any repo:' -ForegroundColor Green
+Write-Host '  dp status'
+Write-Host ''

@@ -3,13 +3,13 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/deplyd/main/install.sh | sh
 #
-# Downloads the release for your platform, checks it against the published
-# checksums, verifies its provenance when gh is available, and puts the binary
-# somewhere on your PATH. Nothing needs root.
+# Downloads the release, checks it, puts deplyd and dp on your PATH, installs the
+# GitHub CLI if it is missing, signs you in if you are not, and turns on completion.
+# Only installing the GitHub CLI on Linux needs root, and it asks first.
 #
-# Environment:
 #   DEPLYD_INSTALL_DIR   where to put it (default ~/.local/bin)
 #   DEPLYD_VERSION       a tag to install (default the latest release)
+#   DEPLYD_YES           answer yes to every question, for unattended installs
 
 set -eu
 
@@ -21,6 +21,15 @@ fail() { printf '\n%s\n\n' "$*" >&2; exit 1; }
 
 need() {
     command -v "$1" >/dev/null 2>&1 || fail "$1 is required and was not found."
+}
+
+# Piped to sh, so stdin is the script. Questions go to the terminal or are skipped.
+confirm() {
+    [ -n "${DEPLYD_YES:-}" ] && return 0
+    [ -r /dev/tty ] || return 1
+    printf '%s [Y/n] ' "$1" > /dev/tty
+    read -r answer < /dev/tty || return 1
+    case "$answer" in '' | y | Y | yes | YES) return 0 ;; *) return 1 ;; esac
 }
 
 need curl
@@ -58,6 +67,7 @@ fi
 ARCHIVE="deplyd-$TAG-$TARGET.tar.gz"
 BASE="https://github.com/$REPO/releases/download/$TAG"
 
+say ""
 say "deplyd $TAG for $TARGET"
 
 # --- download ---------------------------------------------------------------
@@ -84,9 +94,8 @@ if curl -fsSL "$BASE/SHA256SUMS" -o "$WORK/SHA256SUMS" 2>/dev/null; then
     fi
 fi
 
-# deplyd needs gh anyway, so the provenance check costs nobody an extra tool.
-# Signed through Sigstore and recorded in a public log, so this says the binary
-# came from that repository's release workflow and not from somewhere else.
+# Signed through Sigstore and recorded in a public log, so this says the binary came
+# from that repository's release workflow and not from somewhere else.
 if command -v gh >/dev/null 2>&1; then
     if gh attestation verify "$WORK/$ARCHIVE" --repo "$REPO" >/dev/null 2>&1; then
         say "  provenance ok"
@@ -117,24 +126,99 @@ else
     say "  dp         short name for deplyd"
 fi
 
-say ""
-
-# --- is it reachable --------------------------------------------------------
+# --- PATH -------------------------------------------------------------------
 
 case ":$PATH:" in
-    *":$INSTALL_DIR:"*)
-        say "Run 'deplyd check' to see what it is allowed to do."
-        ;;
-    *)
-        say "$INSTALL_DIR is not on your PATH. Add it:"
-        say ""
-        case "${SHELL:-}" in
-            */zsh)  say "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.zshrc && exec zsh" ;;
-            */fish) say "  fish_add_path $INSTALL_DIR" ;;
-            *)      say "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.bashrc && exec bash" ;;
-        esac
-        ;;
+    *":$INSTALL_DIR:"*) ;;
+    *) PATH="$INSTALL_DIR:$PATH"; export PATH; NEEDS_PATH=1 ;;
 esac
 
+# --- the GitHub CLI ---------------------------------------------------------
+
 say ""
-say "deplyd reads GitHub as you. If you have not already:  gh auth login"
+
+install_gh() {
+    if [ "$(uname -s)" = "Darwin" ]; then
+        command -v brew >/dev/null 2>&1 || return 1
+        brew install gh
+        return $?
+    fi
+    # Root, so it asks before it does this and takes no for an answer.
+    if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update && sudo apt-get install -y gh
+    elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y gh
+    elif command -v pacman >/dev/null 2>&1; then
+        sudo pacman -S --noconfirm github-cli
+    elif command -v zypper >/dev/null 2>&1; then
+        sudo zypper install -y gh
+    else
+        return 1
+    fi
+}
+
+if ! command -v gh >/dev/null 2>&1; then
+    if confirm "deplyd reads GitHub through the GitHub CLI, which is not installed. Install it?"; then
+        install_gh || true
+    fi
+fi
+
+if command -v gh >/dev/null 2>&1; then
+    if gh auth status >/dev/null 2>&1; then
+        say "  github     signed in"
+    elif confirm "You are not signed in to GitHub. Sign in now?"; then
+        # Interactive on purpose: a device flow against access you already have.
+        gh auth login < /dev/tty || true
+    else
+        say "  github     not signed in - run: gh auth login"
+    fi
+else
+    say "The GitHub CLI is needed. Install it, then run: gh auth login"
+    say "  https://cli.github.com"
+fi
+
+# --- completion -------------------------------------------------------------
+
+START="# >>> deplyd completions >>>"
+END="# <<< deplyd completions <<<"
+
+case "${SHELL:-}" in
+    */zsh)  rc="$HOME/.zshrc"; shell=zsh ;;
+    */fish) rc="$HOME/.config/fish/config.fish"; shell=fish ;;
+    */bash) rc="$HOME/.bashrc"; shell=bash ;;
+    *)      rc=""; shell="" ;;
+esac
+
+if [ -n "$rc" ]; then
+    mkdir -p "$(dirname "$rc")"
+    [ -f "$rc" ] || : > "$rc"
+    # Drop a previous block before writing this one, so reinstalling does not stack up.
+    if grep -qF "$START" "$rc" 2>/dev/null; then
+        sed -i.deplyd-bak "/^$START\$/,/^$END\$/d" "$rc" && rm -f "$rc.deplyd-bak"
+    fi
+    {
+        printf '%s\n' "$START"
+        "$INSTALL_DIR/deplyd" completions "$shell"
+        printf '%s\n' "$END"
+    } >> "$rc"
+    say "  completion added to $rc"
+else
+    say "  completion skipped - unknown shell. Run: deplyd completions bash >> ~/.bashrc"
+fi
+
+# --- done -------------------------------------------------------------------
+
+say ""
+if [ -n "${NEEDS_PATH:-}" ] && [ -n "$rc" ]; then
+    if [ "$shell" = "fish" ]; then
+        printf '%s\n' "fish_add_path $INSTALL_DIR" >> "$rc"
+    else
+        printf '%s\n' "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$rc"
+    fi
+    say "  path       added to $rc"
+    say ""
+fi
+
+say "Done. Open a new terminal, then from inside any repo:"
+say "  dp status"
+say ""

@@ -42,6 +42,9 @@ Commit SHAs and run numbers are links where the terminal supports them.
 
 ## Install
 
+One command. It installs deplyd and `dp`, puts them on your PATH, installs the GitHub
+CLI if you have not got it, signs you in, and turns on tab completion.
+
 **macOS and Linux**
 
 ```bash
@@ -54,50 +57,39 @@ curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/deplyd/main/install
 irm https://raw.githubusercontent.com/BertilVossebelt/deplyd/main/install.ps1 | iex
 ```
 
-The installer checks the download against the published checksums, verifies its
-provenance, and puts it on your PATH. Nothing needs root or administrator rights. It
-also links `dp` to it as a short name, unless something called `dp` is already there.
-
-Or take a binary from [releases](https://github.com/BertilVossebelt/deplyd/releases)
-and put it on your PATH yourself. There is no runtime to install either way.
-
-You also need the [GitHub CLI](https://cli.github.com/), signed in:
-
-```bash
-gh auth login
-```
-
-That is a device flow against access you already have. deplyd deliberately never asks
-you to create a personal access token: on an organisation repository that can need an
-owner's approval, and needing permission from someone is the thing this tool exists to
-avoid. In CI, `GITHUB_TOKEN` is used instead, so no login step is needed there.
-
-Tab completion, once:
-
-```bash
-deplyd completions bash >> ~/.bashrc     # or zsh, fish, elvish
-```
-
-```powershell
-deplyd completions powershell >> $PROFILE
-```
-
-That completes commands and flags, and fills in environments and authors from what the
-repo actually has. It also defines `dp` if the installer did not, and leaves the name
-alone if something else already answers to it.
-
-Every release is signed and recorded in a public transparency log, so a download can
-be checked against the repository it claims to come from:
-
-```bash
-gh attestation verify deplyd --repo BertilVossebelt/deplyd
-```
-
-Building from source needs Rust 1.98 or newer:
+**From source**, needing Rust 1.98 or newer
 
 ```bash
 git clone https://github.com/BertilVossebelt/deplyd.git
 cd deplyd && cargo install --path crates/deplyd
+```
+
+Then open a new terminal, and from inside any repo:
+
+```bash
+dp status
+```
+
+## Setup
+
+The installer does all of this. You only need it if you built from source, or said no
+to something.
+
+| | |
+|---------------|--------------------------------------------------------------------|
+| Sign in       | `gh auth login` |
+| Completion    | `deplyd completions powershell >> $PROFILE`, or bash, zsh, fish, elvish |
+| Short name    | `dp` is a link to `deplyd`, made next to it |
+
+Signing in is a device flow against access you already have. deplyd never asks you to
+create a personal access token: on an organisation repository that can need an owner's
+approval, and needing permission from someone is the thing this tool exists to avoid.
+In CI, `GITHUB_TOKEN` is used instead, so there is no login step there.
+
+Every release is signed and recorded in a public transparency log:
+
+```bash
+gh attestation verify deplyd --repo BertilVossebelt/deplyd
 ```
 
 ## Usage
