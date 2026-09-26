@@ -34,6 +34,8 @@ pub struct Settings {
     pub environment: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth: Option<u32>,
 }
 
 impl Settings {

@@ -108,6 +108,13 @@ fn main() -> ExitCode {
         Some(resolve_author(&options.author, &settings, &repo))
     };
 
+    // The flag beats the kept default beats the built-in.
+    let depth = options
+        .depth
+        .or(settings.depth)
+        .map(|value| value as usize)
+        .unwrap_or(deplyd_core::report::DEFAULT_DEPTH);
+
     let mut context = match Context::build(repo.root(), author, settings) {
         Ok(context) => context,
         Err(error) => stop_for_context(&error, &repo),
@@ -240,6 +247,7 @@ fn main() -> ExitCode {
                 context.author.as_deref(),
                 options.take as usize,
                 options.skip as usize,
+                depth,
             ) {
                 Ok(report) => report,
                 Err(error) => render::stop(&error.to_string(), &[]),
@@ -273,7 +281,7 @@ fn main() -> ExitCode {
                     skip: options.skip as usize,
                 };
                 render::target_summary(&context, &targets, &repo, &web, Some(page));
-                render::status(&context, &targets, &report, &web);
+                render::status(&context, &targets, &report, &web, depth);
             }
 
             ExitCode::SUCCESS
@@ -583,6 +591,7 @@ fn remember(settings: &mut Settings, what: Option<&str>, value: Option<&str>) {
         "deplyd remember author \"Ada\"".to_string(),
         "deplyd remember environment staging".to_string(),
         "deplyd remember repo <path>".to_string(),
+        "deplyd remember depth 500".to_string(),
     ];
 
     let Some(key) = what.map(str::to_lowercase) else {
@@ -598,6 +607,13 @@ fn remember(settings: &mut Settings, what: Option<&str>, value: Option<&str>) {
     match key.as_str() {
         "author" => settings.author = Some(value.to_string()),
         "environment" => settings.environment = Some(value.to_string()),
+        "depth" => match value.trim().parse::<u32>() {
+            Ok(depth) if depth > 0 => settings.depth = Some(depth),
+            _ => render::stop(
+                &format!("A depth is a whole number of commits, not '{value}'."),
+                &["deplyd remember depth 500".into()],
+            ),
+        },
         "repo" => {
             let path = PathBuf::from(value);
             if !path.is_dir() {

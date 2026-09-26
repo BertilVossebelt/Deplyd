@@ -17,6 +17,11 @@ pub struct Record {
     pub label: String,
 }
 
+/// How far back to read per target. A repository can hold more history than
+/// anyone wants to page through, and the walk is per target, so this is a
+/// ceiling rather than a total.
+pub const DEFAULT_DEPTH: usize = 200;
+
 /// One row: a pull request where there is one, a commit where there is not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
@@ -193,6 +198,9 @@ pub fn entry_width(entries: &[Entry]) -> usize {
 pub struct Status {
     /// None when the report covers everyone.
     pub author: Option<String>,
+    /// A target filled its depth, so there is probably older history unread and
+    /// the total below is a floor, not a count.
+    pub capped: bool,
     pub live: Vec<Entry>,
     pub page: Vec<Entry>,
     pub reverted: Vec<String>,
@@ -205,18 +213,25 @@ pub fn status(
     author: Option<&str>,
     take: usize,
     skip: usize,
+    depth: usize,
 ) -> Result<Status, NoAuthor> {
     let mut all = Vec::new();
     let mut reverted: Vec<String> = Vec::new();
+    let mut capped = false;
+    let limit = format!("-{}", depth.max(1));
 
     for target in targets {
-        all.extend(records(
+        let found = records(
             repo,
-            &["-200", &target.sha],
+            &[&limit, &target.sha],
             &target.scope,
             &target.label,
             author,
-        )?);
+        )?;
+        // Exactly the depth means git stopped because it was told to, not because
+        // it ran out. Saying "of 355" then would be a number deplyd made up.
+        capped |= found.len() >= depth;
+        all.extend(found);
         for sha in crate::history::reverted_commits(repo, &target.sha) {
             if !reverted.contains(&sha) {
                 reverted.push(sha);
@@ -229,6 +244,7 @@ pub fn status(
 
     Ok(Status {
         author: author.map(str::to_string),
+        capped,
         live,
         page,
         reverted,
