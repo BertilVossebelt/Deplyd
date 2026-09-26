@@ -311,6 +311,8 @@ cargo test
 No GitHub account or network needed: fixture repositories are built with
 `GIT_ALLOW_PROTOCOL=file`, so git itself refuses ssh and https.
 
+Cutting a release is in [RELEASING.md](RELEASING.md).
+
 ## Licence
 
 MIT, copyright Bertil Vossebelt.
