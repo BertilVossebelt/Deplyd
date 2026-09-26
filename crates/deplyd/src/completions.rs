@@ -74,14 +74,17 @@ fn pairs(values: impl IntoIterator<Item = (String, String)>) -> String {
 }
 
 fn powershell(command: &mut ClapCommand) {
-    let subcommands = pairs(command.get_subcommands().filter(|sub| !sub.is_hide_set()).map(
-        |sub| {
-            (
-                sub.get_name().to_string(),
-                sub.get_about().map(|a| a.to_string()).unwrap_or_default(),
-            )
-        },
-    ));
+    let subcommands = pairs(
+        command
+            .get_subcommands()
+            .filter(|sub| !sub.is_hide_set())
+            .map(|sub| {
+                (
+                    sub.get_name().to_string(),
+                    sub.get_about().map(|a| a.to_string()).unwrap_or_default(),
+                )
+            }),
+    );
 
     let mut flags = Vec::new();
     let mut value_flags = Vec::new();

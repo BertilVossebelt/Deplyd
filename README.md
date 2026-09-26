@@ -48,19 +48,19 @@ CLI if you have not got it, signs you in, and turns on tab completion.
 **macOS and Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/deplyd/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh
 ```
 
 **Windows**
 
 ```powershell
-irm https://raw.githubusercontent.com/BertilVossebelt/deplyd/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1 | iex
 ```
 
 **From source**, needing Rust 1.98 or newer
 
 ```bash
-git clone https://github.com/BertilVossebelt/deplyd.git
+git clone https://github.com/BertilVossebelt/Deplyd.git
 cd deplyd && cargo install --path crates/deplyd
 ```
 
@@ -89,7 +89,7 @@ In CI, `GITHUB_TOKEN` is used instead, so there is no login step there.
 Every release is signed and recorded in a public transparency log:
 
 ```bash
-gh attestation verify deplyd --repo BertilVossebelt/deplyd
+gh attestation verify deplyd --repo BertilVossebelt/Deplyd
 ```
 
 ## Usage

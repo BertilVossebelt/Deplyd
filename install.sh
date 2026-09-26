@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs deplyd on macOS or Linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/deplyd/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh
 #
 # Downloads the release, checks it, puts deplyd and dp on your PATH, installs the
 # GitHub CLI if it is missing, signs you in if you are not, and turns on completion.
@@ -13,7 +13,7 @@
 
 set -eu
 
-REPO="BertilVossebelt/deplyd"
+REPO="BertilVossebelt/Deplyd"
 INSTALL_DIR="${DEPLYD_INSTALL_DIR:-$HOME/.local/bin}"
 
 say() { printf '%s\n' "$*"; }

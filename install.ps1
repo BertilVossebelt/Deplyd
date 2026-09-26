@@ -1,6 +1,6 @@
 # Installs deplyd on Windows.
 #
-#   irm https://raw.githubusercontent.com/BertilVossebelt/deplyd/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1 | iex
 #
 # Downloads the release, checks it, puts deplyd and dp on your PATH, installs the
 # GitHub CLI if it is missing, signs you in if you are not, and turns on completion.
@@ -12,7 +12,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$repo = 'BertilVossebelt/deplyd'
+$repo = 'BertilVossebelt/Deplyd'
 $installDir = if ($env:DEPLYD_INSTALL_DIR) {
     $env:DEPLYD_INSTALL_DIR
 } else {
