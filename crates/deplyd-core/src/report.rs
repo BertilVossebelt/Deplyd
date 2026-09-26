@@ -1,5 +1,7 @@
 //! An author's commits, grouped for the report. Nothing here decides anything.
 
+use std::collections::HashMap;
+
 use crate::gateway::git::Verb;
 use crate::repo::Repo;
 use crate::targets::Target;
@@ -110,14 +112,17 @@ pub fn records(
 /// Collapses records for the same commit across targets, newest first. A commit in
 /// two scopes is one change labelled COMBINED, not two rows.
 pub fn merge_records(records: &[Record]) -> Vec<Entry> {
-    let mut order: Vec<String> = Vec::new();
+    // Grouped through an index rather than by scanning what is already grouped:
+    // that scan was a comparison per record per record, which a repository with
+    // real history notices.
+    let mut first_seen: HashMap<&str, usize> = HashMap::new();
     let mut grouped: Vec<(String, Vec<&Record>)> = Vec::new();
 
     for record in records {
-        match order.iter().position(|sha| *sha == record.sha) {
-            Some(index) => grouped[index].1.push(record),
+        match first_seen.get(record.sha.as_str()) {
+            Some(&index) => grouped[index].1.push(record),
             None => {
-                order.push(record.sha.clone());
+                first_seen.insert(&record.sha, grouped.len());
                 grouped.push((record.sha.clone(), vec![record]));
             }
         }
@@ -298,6 +303,34 @@ mod tests {
         assert_eq!(merged[0].label, "COMBINED");
         assert_eq!(merged[0].sha, "aaa");
         assert_eq!(merged[1].label, "API", "newest first");
+    }
+
+    #[test]
+    fn grouping_holds_up_when_the_same_commit_is_far_apart() {
+        // The index replaced a scan of everything grouped so far. Two records for
+        // one commit with a thousand between them is what that scan was for.
+        let mut records = Vec::new();
+        records.push(record("same", 1_000, "API"));
+        for index in 0..1_000 {
+            records.push(record(&format!("c{index}"), 500 - index, "API"));
+        }
+        records.push(record("same", 1_000, "WEB"));
+
+        let merged = merge_records(&records);
+        assert_eq!(merged.len(), 1_001, "one row per commit");
+        assert_eq!(merged[0].sha, "same", "newest first");
+        assert_eq!(merged[0].label, "COMBINED", "both targets, one row");
+    }
+
+    fn record(sha: &str, when: i64, label: &str) -> Record {
+        Record {
+            sha: sha.into(),
+            author: "Ada".into(),
+            when,
+            date: "2026-01-02 10:00".into(),
+            subject: format!("change {sha}"),
+            label: label.into(),
+        }
     }
 
     #[test]
