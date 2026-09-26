@@ -251,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "deplyd"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -266,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "deplyd-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "deplyd-gateway",
  "insta",
@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "deplyd-gateway"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "reqwest",
  "serde",
