@@ -18,6 +18,11 @@ pub const DEPLOYMENTS_PER_ENVIRONMENT: u32 = 20;
 pub const MAX_IN_FLIGHT: usize = 8;
 
 #[derive(Debug, Clone, Deserialize)]
+struct Release {
+    tag_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct Run {
     pub id: u64,
     pub created_at: String,
@@ -174,6 +179,13 @@ impl GitHub {
 
     fn get(&self, route: &Route) -> Result<String, HttpError> {
         self.http.get(route, &self.owner, &self.repo)
+    }
+
+    /// The tag of the newest published release, for the update check.
+    pub fn latest_release(&self) -> Option<String> {
+        let body = self.get(&Route::LatestRelease).ok()?;
+        let parsed: Release = serde_json::from_str(&body).ok()?;
+        Some(parsed.tag_name)
     }
 
     /// Recent runs of one workflow.
