@@ -66,20 +66,6 @@ git clone https://github.com/BertilVossebelt/Deplyd.git
 cd deplyd && cargo install --path crates/deplyd
 ```
 
-Working on deplyd itself, dot-source `dev-install.sh`, or `dev-install.ps1` on
-Windows. It builds the tree and puts that build on PATH for the current terminal
-only, so a change can be tried without cutting a release and nothing outlives the
-window:
-
-```bash
-. ./dev-install.sh
-```
-
-The dot matters: a script cannot change the PATH of the shell that ran it. Add
-`--persist` to install the build the way the installer would, for when the thing
-being changed is the installer itself, and `--revert` to undo that. Neither is the
-installer: that one only ever takes a published release.
-
 Then open a new terminal, and from inside any repo:
 
 ```bash
@@ -345,12 +331,35 @@ about dependencies, which run with the same permissions deplyd does.
 
 ## Development
 
+**Running:**
+
+To try a change the way someone else would meet it, dot-source `dev-install.sh`, or
+`dev-install.ps1` on Windows:
+
+```bash
+. ./dev-install.sh
+```
+
+That builds the tree and puts the build on PATH for the current terminal, with
+completion, and writes nothing to your profile or rc file. Close the terminal and
+nothing of it is left. The dot matters: a script cannot change the PATH of the shell
+that ran it.
+
+`--persist` installs the build the way the installer would, which is what to use
+when the installer is the thing being changed, and `--revert` undoes that. Neither
+is the installer: that one only ever takes a published release, and refuses anything
+it cannot verify.
+
+**Testing:**
+
+Run the tests with:
 ```bash
 cargo test
 ```
 
 No GitHub account or network needed: fixture repositories are built with
 `GIT_ALLOW_PROTOCOL=file`, so git itself refuses ssh and https.
+
 
 Cutting a release is in [RELEASING.md](RELEASING.md).
 
