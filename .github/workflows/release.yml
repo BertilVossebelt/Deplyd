@@ -33,7 +33,7 @@ jobs:
     name: guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Format
         run: cargo fmt --all --check
@@ -86,7 +86,7 @@ jobs:
             optional: true
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Add target
         run: rustup target add ${{ matrix.target }}
@@ -111,7 +111,7 @@ jobs:
           Copy-Item README.md, LICENSE dist/
           Compress-Archive -Path dist/* -DestinationPath "deplyd-${{ env.VERSION }}-${{ matrix.target }}.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: deplyd-${{ matrix.target }}
           path: deplyd-${{ env.VERSION }}-${{ matrix.target }}.*
@@ -132,9 +132,9 @@ jobs:
       attestations: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -144,7 +144,7 @@ jobs:
         run: sha256sum deplyd-* > SHA256SUMS
 
       - name: Attest provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: "artifacts/deplyd-*"
 

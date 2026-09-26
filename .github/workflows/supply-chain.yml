@@ -20,9 +20,9 @@ jobs:
     name: cargo-deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-deny
           key: cargo-deny-${{ runner.os }}
@@ -38,7 +38,7 @@ jobs:
     name: dependency tree
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The tree is small enough to read, which is the point. A jump in the count
       # means something new arrived, and that should be a decision rather than a
