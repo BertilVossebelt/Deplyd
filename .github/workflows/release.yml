@@ -1,9 +1,11 @@
 name: Release
 
-# Tag a commit and push the tag:
-#   git tag v0.2.0 && git push origin v0.2.0
+# `version` in Cargo.toml is the switch. Merge a change to it and a release goes
+# out; merge anything else and nothing happens. A tag still works, for a release
+# cut by hand.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   # A rehearsal: builds every target and checks the guard, publishes nothing.
   workflow_dispatch:
@@ -17,20 +19,64 @@ on:
 permissions:
   contents: read
 
-env:
-  # A tag push releases under its tag; a dispatch only rehearses.
-  VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
-
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  # Which version, and whether it is a release at all. Every other job reads this
+  # rather than working it out again from the event.
+  decide:
+    name: what to release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+      publish: ${{ steps.pick.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$REF_TYPE" = "tag" ]; then
+            version="$REF_NAME"
+            publish=true
+          elif [ "$EVENT" = "workflow_dispatch" ]; then
+            version="$INPUT_VERSION"
+            publish=false
+          else
+            # Only the workspace version, which is the first one in the file.
+            version="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+            if gh release view "$version" >/dev/null 2>&1; then
+              publish=false
+            else
+              publish=true
+            fi
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+          if [ "$publish" = "true" ]; then
+            echo "::notice::releasing $version"
+          else
+            echo "::notice::$version needs no release"
+          fi
+
   # Nothing is built or signed unless the guard passes. This is the first half of
   # what an attestation is worth: the signature says a binary came from this commit,
   # and this job says what was true of that commit.
   guard:
     name: guard
+    needs: decide
+    # A merge that left the version alone is not a release, and CI has already
+    # run on it. Nothing to do.
+    if: needs.decide.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -55,9 +101,11 @@ jobs:
 
   build:
     name: ${{ matrix.target }}
-    needs: guard
+    needs: [decide, guard]
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.optional == true }}
+    env:
+      VERSION: ${{ needs.decide.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -119,10 +167,10 @@ jobs:
 
   publish:
     name: publish
-    needs: build
-    # Only a tag push publishes. A dispatch has already done the useful part by
-    # getting here: the guard passed and every target built.
-    if: github.event_name == 'push'
+    needs: [decide, build]
+    # A dispatch has already done the useful part by getting here: the guard
+    # passed and every target built.
+    if: needs.decide.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -144,17 +192,45 @@ jobs:
         run: sha256sum deplyd-* > SHA256SUMS
 
       - name: Attest provenance
+        id: attest
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: "artifacts/deplyd-*"
 
+      # Published with the release so the installer can check a download against it
+      # without an account or a token of any kind. One file covers every archive.
+      - name: Publish the attestation bundle
+        run: cp "${{ steps.attest.outputs.bundle-path }}" artifacts/attestation.json
+
+      # The exact check the installer runs, with no token in the environment. A
+      # release that would not verify fails here rather than on someone's machine.
+      - name: Check the bundle verifies every archive
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          for archive in artifacts/deplyd-*; do
+            gh attestation verify "$archive" --repo "$REPO" --bundle artifacts/attestation.json
+          done
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.decide.outputs.version }}
           REPO: ${{ github.repository }}
+          REF_TYPE: ${{ github.ref_type }}
+          SHA: ${{ github.sha }}
         run: |
-          gh release create "$TAG" artifacts/*             --title "deplyd $TAG"             --generate-notes
+          args=(--title "deplyd $TAG" --generate-notes)
+
+          # A version with a suffix is a prerelease: v0.3.0-rc.1 does not become
+          # what "latest release" means, so an installer keeps ignoring it.
+          case "$TAG" in *-*) args+=(--prerelease) ;; esac
+
+          # Released from a branch, so there is no tag yet. Creating the release
+          # creates it, at the commit being released.
+          [ "$REF_TYPE" = "tag" ] || args+=(--target "$SHA")
+
+          gh release create "$TAG" artifacts/* "${args[@]}"
 
           # Appended rather than passed as --notes, which cannot be combined with
           # --generate-notes. Written through a file so the indentation of this
@@ -169,6 +245,12 @@ jobs:
             echo
             echo '```'
             echo "gh attestation verify <file> --repo $REPO"
+            echo '```'
+            echo
+            echo "Or without signing in, against the bundle published here:"
+            echo
+            echo '```'
+            echo "gh attestation verify <file> --repo $REPO --bundle attestation.json"
             echo '```'
             echo
             echo '`SHA256SUMS` lists the checksums.'
