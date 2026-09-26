@@ -66,6 +66,11 @@ git clone https://github.com/BertilVossebelt/Deplyd.git
 cd deplyd && cargo install --path crates/deplyd
 ```
 
+Working on deplyd itself, `./dev-install.sh` and `.\dev-install.ps1` build the tree
+and stage that build where the installer would put it, so a change can be tried on
+PATH without cutting a release. `--revert` takes it back off. They are not the
+installer: that one only ever takes a published release.
+
 Then open a new terminal, and from inside any repo:
 
 ```bash

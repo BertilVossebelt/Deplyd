@@ -256,6 +256,11 @@ if ($Uninstall) {
     return
 }
 
+# Dot-sourced by dev-install.ps1, which wants these functions and none of the work
+# below. Stopping here is all it does: there is no path that installs anything the
+# checks further down have not been through.
+if ($env:DEPLYD_SOURCE_ONLY) { return }
+
 # --- what are we running on -------------------------------------------------
 
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
