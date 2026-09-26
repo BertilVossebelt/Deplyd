@@ -1,0 +1,20 @@
+[package]
+name = "deplyd-gateway"
+description = "The only way deplyd reaches git or GitHub. Reads only, and refuses the rest."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+# Distributed as binaries, not on crates.io. Also stops a stray cargo publish.
+publish = false
+
+# reqwest lives here and nowhere else. deplyd-core does not list it, so code there
+# cannot reach it: not a lint, a resolution error.
+[dependencies]
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

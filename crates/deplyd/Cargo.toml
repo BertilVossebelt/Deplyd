@@ -1,0 +1,31 @@
+[package]
+name = "deplyd"
+description = "Pull request deployment checker for GitHub Actions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+# Distributed as binaries, not on crates.io. Also stops a stray cargo publish.
+publish = false
+
+[[bin]]
+name = "deplyd"
+path = "src/main.rs"
+
+[dependencies]
+deplyd-core = { path = "../deplyd-core" }
+serde = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+anstream = { workspace = true }
+anstyle = { workspace = true }
+serde_json = { workspace = true }
+terminal_size = "0.4.4"
+
+[dev-dependencies]
+insta = { workspace = true }
+serde_json.workspace = true
+
+[lints]
+workspace = true

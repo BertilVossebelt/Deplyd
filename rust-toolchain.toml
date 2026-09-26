@@ -1,0 +1,4 @@
+# Pinned so the read-only guard cannot pass here and fail somewhere else.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]

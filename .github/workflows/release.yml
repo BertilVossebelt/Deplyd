@@ -1,0 +1,177 @@
+name: Release
+
+# Tag a commit and push the tag:
+#   git tag v0.2.0 && git push origin v0.2.0
+on:
+  push:
+    tags: ["v*"]
+  # A rehearsal: builds every target and checks the guard, publishes nothing.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to stamp on the archives, e.g. v0.2.0
+        type: string
+        default: dry-run
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  # A tag push releases under its tag; a dispatch only rehearses.
+  VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Nothing is built or signed unless the guard passes. This is the first half of
+  # what an attestation is worth: the signature says a binary came from this commit,
+  # and this job says what was true of that commit.
+  guard:
+    name: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --all-targets
+
+      - name: The binary reports its own guard intact
+        run: |
+          cargo build --release
+          ./target/release/deplyd check
+          if ./target/release/deplyd check | grep -q FAIL; then
+            echo "::error::the built binary reports its own guard broken"
+            exit 1
+          fi
+
+  build:
+    name: ${{ matrix.target }}
+    needs: guard
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.optional == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+          # Cross-compiled from the arm64 runner rather than built on an Intel one:
+          # Apple's toolchain does this natively, and the Intel image is on its way
+          # out - a rehearsal sat queued for it while every other target finished.
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar
+          # Public arm64 runners are newer than the rest. If they are not available
+          # to this account, the release goes out without this one binary rather
+          # than not at all.
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            archive: tar
+            optional: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} --package deplyd
+
+      - name: Archive (tar)
+        if: matrix.archive == 'tar'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/deplyd dist/
+          cp README.md LICENSE dist/
+          tar -czf deplyd-${{ env.VERSION }}-${{ matrix.target }}.tar.gz -C dist .
+
+      - name: Archive (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/deplyd.exe dist/
+          Copy-Item README.md, LICENSE dist/
+          Compress-Archive -Path dist/* -DestinationPath "deplyd-${{ env.VERSION }}-${{ matrix.target }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deplyd-${{ matrix.target }}
+          path: deplyd-${{ env.VERSION }}-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    # Only a tag push publishes. A dispatch has already done the useful part by
+    # getting here: the guard passed and every target built.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Provenance is signed through Sigstore and recorded in a public transparency
+      # log, so a release cannot be quietly replaced later.
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: artifacts
+        run: sha256sum deplyd-* > SHA256SUMS
+
+      - name: Attest provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "artifacts/deplyd-*"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release create "$TAG" artifacts/*             --title "deplyd $TAG"             --generate-notes
+
+          # Appended rather than passed as --notes, which cannot be combined with
+          # --generate-notes. Written through a file so the indentation of this
+          # workflow does not become a markdown code block.
+          {
+            gh release view "$TAG" --json body --jq .body
+            echo
+            echo "## Verifying a download"
+            echo
+            echo "Every binary here is signed through Sigstore and recorded in a"
+            echo "public transparency log, so a release cannot be quietly replaced."
+            echo
+            echo '```'
+            echo "gh attestation verify <file> --repo $REPO"
+            echo '```'
+            echo
+            echo '`SHA256SUMS` lists the checksums.'
+          } > notes.md
+
+          gh release edit "$TAG" --notes-file notes.md

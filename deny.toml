@@ -1,0 +1,45 @@
+# cargo-deny: what is allowed into the dependency tree.
+#
+# The read-only guard covers deplyd's own code and says nothing about dependencies,
+# which run with the same permissions it does. This is the part that does: a small
+# tree, pinned by Cargo.lock, checked for advisories.
+
+[graph]
+all-features = false
+
+[advisories]
+# A known vulnerability fails the build. There is no allowance list on purpose: an
+# exception should be a visible decision, added here with a reason.
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Permissive only. deplyd is MIT and nothing in it should complicate that.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    # webpki-roots ships Mozilla's CA list under this. It is a data licence and
+    # permissive, which is the bar here.
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Two versions of the same crate usually means something was pulled in twice by
+# accident. A warning rather than an error: it is common and rarely harmful.
+multiple-versions = "warn"
+# A dependency with no version at all is worth refusing - except the workspace's own
+# crates, which are path dependencies by design.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

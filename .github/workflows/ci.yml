@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main, rust-port]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the version, so nothing here chooses one.
+      - name: Show toolchain
+        run: rustc --version && cargo --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+
+      # The suite needs git to build fixture repositories. It cannot reach a remote:
+      # every sandbox sets GIT_ALLOW_PROTOCOL=file.
+      - name: Test
+        run: cargo test --workspace --all-targets
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: lint-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      # clippy.toml is half the read-only guard: it keeps std::process::Command
+      # inside the gateway crate. A warning here is a failure.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings

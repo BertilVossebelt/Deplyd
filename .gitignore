@@ -1,10 +1,10 @@
-# Remembered defaults: author, environment, repo path.
-deplyd.settings.json
-
 # Editors
 .idea/
 .vs/
 .vscode/
 
-# Per-repo settings written by deplyd init.
-overrides/
+# Rust build output.
+/target/
+
+# Written by the release workflow, never committed.
+notes.md

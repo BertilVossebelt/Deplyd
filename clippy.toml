@@ -1,0 +1,13 @@
+# The read-only guard, enforced at build time.
+#
+# Nothing outside src/gateway/ may construct a process or reach the filesystem in a
+# way that could write. The gateway modules opt back in with a narrow, reviewed
+# #[allow], and tests/guard_source.rs checks that those allows exist nowhere else.
+disallowed-types = [
+    { path = "std::process::Command", reason = "spawn only through gateway::git" },
+]
+disallowed-methods = [
+    { path = "std::fs::remove_file", reason = "deplyd never deletes" },
+    { path = "std::fs::remove_dir_all", reason = "deplyd never deletes" },
+    { path = "std::fs::rename", reason = "deplyd never moves files" },
+]

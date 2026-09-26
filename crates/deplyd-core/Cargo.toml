@@ -1,0 +1,22 @@
+[package]
+name = "deplyd-core"
+description = "Deciding what deployed and whether a change is in it. Never prints."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+# Distributed as binaries, not on crates.io. Also stops a stray cargo publish.
+publish = false
+
+[dependencies]
+deplyd-gateway = { path = "../deplyd-gateway" }
+regex = "1.13.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+
+[lints]
+workspace = true
