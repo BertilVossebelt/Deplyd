@@ -191,6 +191,7 @@ pub fn target_reports(context: &Context, targets: &TargetSet) -> Vec<TargetRepor
 #[serde(rename_all = "camelCase")]
 pub struct ChangeReport {
     pub label: String,
+    pub author: String,
     pub id: String,
     pub title: String,
     pub commit: String,
@@ -200,7 +201,8 @@ pub struct ChangeReport {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusJson {
-    pub author: String,
+    /// null when the report covers everyone.
+    pub author: Option<String>,
     pub environment: String,
     pub targets: Vec<TargetReport>,
     pub changes: Vec<ChangeReport>,

@@ -102,7 +102,11 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let author = resolve_author(&options.author, &settings, &repo);
+    let author = if options.anyone {
+        None
+    } else {
+        Some(resolve_author(&options.author, &settings, &repo))
+    };
 
     let mut context = match Context::build(repo.root(), author, settings) {
         Ok(context) => context,
@@ -199,7 +203,7 @@ fn main() -> ExitCode {
                 targets: verdict::target_reports(&context, &targets),
             });
         } else {
-            render::target_summary(&context, &targets, &repo, &web, false);
+            render::target_summary(&context, &targets, &repo, &web, None);
             render::change(&targets, &report, &web);
         }
 
@@ -217,7 +221,7 @@ fn main() -> ExitCode {
                 };
                 print_json(&document);
             } else {
-                render::target_summary(&context, &targets, &repo, &web, false);
+                render::target_summary(&context, &targets, &repo, &web, None);
                 render::change(&targets, &report, &web);
             }
 
@@ -233,7 +237,7 @@ fn main() -> ExitCode {
             let report = match deplyd_core::report::status(
                 &repo,
                 &targets.targets,
-                &context.author,
+                context.author.as_deref(),
                 options.take as usize,
                 options.skip as usize,
             ) {
@@ -251,6 +255,7 @@ fn main() -> ExitCode {
                         .iter()
                         .map(|entry| verdict::ChangeReport {
                             label: entry.label.clone(),
+                            author: entry.author.clone(),
                             id: entry.id.clone(),
                             title: entry.title.clone(),
                             commit: entry.sha.clone(),
@@ -263,7 +268,11 @@ fn main() -> ExitCode {
                 };
                 print_json(&document);
             } else {
-                render::target_summary(&context, &targets, &repo, &web, true);
+                let page = render::Page {
+                    take: options.take as usize,
+                    skip: options.skip as usize,
+                };
+                render::target_summary(&context, &targets, &repo, &web, Some(page));
                 render::status(&context, &targets, &report, &web);
             }
 
@@ -637,8 +646,8 @@ fn remember(settings: &mut Settings, what: Option<&str>, value: Option<&str>) {
 fn complete(repo: &Repo, settings: &Settings, what: Option<&str>) {
     match what {
         Some("environments") => {
-            // An empty author: completion must work before one is configured.
-            let Ok(context) = Context::build(repo.root(), String::new(), settings.clone()) else {
+            // No author: completion must work before one is configured.
+            let Ok(context) = Context::build(repo.root(), None, settings.clone()) else {
                 return;
             };
             for name in &context.environments {
