@@ -7,6 +7,7 @@ use crate::targets::Target;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     pub sha: String,
+    pub author: String,
     pub when: i64,
     /// Already formatted by git, so deplyd never does calendar arithmetic.
     pub date: String,
@@ -18,6 +19,7 @@ pub struct Record {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub when: i64,
+    pub author: String,
     pub date: String,
     pub label: String,
     pub sha: String,
@@ -42,30 +44,35 @@ impl std::fmt::Display for NoAuthor {
 
 impl std::error::Error for NoAuthor {}
 
-/// An author's commits reachable from a revision. The author is required:
-/// `--author=''` matches everyone, reporting the team's work as one person's.
+/// Commits reachable from a revision, by one author or by everyone. None is
+/// everyone; an empty name is refused, because `--author=''` matches everyone
+/// while the report still says the commits are yours.
 pub fn records(
     repo: &Repo,
     revision_args: &[&str],
     scope: &[String],
     label: &str,
-    author: &str,
+    author: Option<&str>,
 ) -> Result<Vec<Record>, NoAuthor> {
-    if author.trim().is_empty() {
+    if author.is_some_and(|name| name.trim().is_empty()) {
         return Err(NoAuthor);
     }
 
-    let mut args: Vec<&str> = vec![
+    let mut args: Vec<&str> = vec!["--no-merges"];
+    if let Some(name) = author {
         // An author is a name, not a pattern. Without this, "Ada [Team]" is an
         // invalid regex and git fails, which deplyd read as "no changes" - a silent
         // wrong answer rather than an error.
-        "--fixed-strings",
-        "--author",
-        author,
-        "--no-merges",
-        "--format=%h%x09%ct%x09%cd%x09%s",
+        args.push("--fixed-strings");
+        args.push("--author");
+        args.push(name);
+    }
+    args.extend_from_slice(&[
+        // The name last but one: a subject can hold anything, so it stays the
+        // final field and takes whatever tabs are left.
+        "--format=%h%x09%ct%x09%cd%x09%an%x09%s",
         "--date=format:%Y-%m-%d %H:%M",
-    ];
+    ]);
     args.extend_from_slice(revision_args);
     if !scope.is_empty() {
         args.push("--");
@@ -82,13 +89,15 @@ pub fn records(
         .lines()
         .into_iter()
         .filter_map(|line| {
-            let mut parts = line.splitn(4, '\t');
+            let mut parts = line.splitn(5, '\t');
             let sha = parts.next()?.trim().to_string();
             let when = parts.next()?.trim().parse().ok()?;
             let date = parts.next()?.trim().to_string();
+            let author = parts.next()?.trim().to_string();
             let subject = parts.next()?.trim().to_string();
             Some(Record {
                 sha,
+                author,
                 when,
                 date,
                 subject,
@@ -133,6 +142,7 @@ pub fn merge_records(records: &[Record]) -> Vec<Entry> {
             let (id, title, pull_request) = format_entry(&sha, &first.subject);
             Entry {
                 when: first.when,
+                author: first.author.clone(),
                 date: first.date.clone(),
                 label,
                 sha,
@@ -176,7 +186,8 @@ pub fn entry_width(entries: &[Entry]) -> usize {
 
 /// Everything the status report needs, worked out before anything prints.
 pub struct Status {
-    pub author: String,
+    /// None when the report covers everyone.
+    pub author: Option<String>,
     pub live: Vec<Entry>,
     pub page: Vec<Entry>,
     pub reverted: Vec<String>,
@@ -186,7 +197,7 @@ pub struct Status {
 pub fn status(
     repo: &Repo,
     targets: &[Target],
-    author: &str,
+    author: Option<&str>,
     take: usize,
     skip: usize,
 ) -> Result<Status, NoAuthor> {
@@ -212,7 +223,7 @@ pub fn status(
     let page: Vec<Entry> = live.iter().skip(skip).take(take).cloned().collect();
 
     Ok(Status {
-        author: author.to_string(),
+        author: author.map(str::to_string),
         live,
         page,
         reverted,
@@ -254,6 +265,7 @@ mod tests {
         let records = vec![
             Record {
                 sha: "aaa".into(),
+                author: "Ada".into(),
                 when: 200,
                 date: "2026-01-02 10:00".into(),
                 subject: "shared change".into(),
@@ -261,6 +273,7 @@ mod tests {
             },
             Record {
                 sha: "aaa".into(),
+                author: "Ada".into(),
                 when: 200,
                 date: "2026-01-02 10:00".into(),
                 subject: "shared change".into(),
@@ -268,6 +281,7 @@ mod tests {
             },
             Record {
                 sha: "bbb".into(),
+                author: "Grace".into(),
                 when: 100,
                 date: "2026-01-01 09:00".into(),
                 subject: "api only".into(),
@@ -289,14 +303,10 @@ mod tests {
     #[test]
     fn an_empty_author_is_refused() {
         // git log --author='' matches everyone, reporting the whole team's work as
-        // one person's.
-        let error = records(
-            &crate::repo::Repo::discover(std::path::Path::new(".")).expect("a repo"),
-            &["HEAD"],
-            &[],
-            "API",
-            "   ",
-        );
-        assert!(error.is_err());
+        // one person's. Asking for everyone outright is a different thing, and is
+        // spelled None.
+        let repo = crate::repo::Repo::discover(std::path::Path::new(".")).expect("a repo");
+        assert!(records(&repo, &["HEAD"], &[], "API", Some("   ")).is_err());
+        assert!(records(&repo, &["HEAD"], &[], "API", None).is_ok());
     }
 }

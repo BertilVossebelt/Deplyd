@@ -162,7 +162,8 @@ unambiguous, so `dp env` and `dp auth` work.
 |---------------------------|------------------------------------------------|
 | `-E, --environment <env>` | environment, or a prefix: `-E prod`, `-E stag` |
 | `-A, --author <name>`     | author, default `git config user.name`         |
-| `-T, --take <n>`          | how many changes to list, default 10           |
+| `--anyone`                | every author, not just yours                   |
+| `-T, --take <n>`          | how many to list per list, default 10          |
 | `-S, --skip <n>`          | skip this many, for paging                     |
 | `--repo-path <path>`      | repo to inspect, default the current directory |
 | `-J, --json`              | machine-readable output, for `status` and `pr` |

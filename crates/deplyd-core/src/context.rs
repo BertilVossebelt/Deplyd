@@ -90,7 +90,9 @@ impl std::error::Error for ContextError {}
 
 pub struct Context {
     pub repo_root: PathBuf,
-    pub author: String,
+    /// Who the report is about. None is everyone, which is not the same as an
+    /// empty name: that one matches everyone and calls it yours.
+    pub author: Option<String>,
     pub settings: Settings,
     pub overrides: Option<Override>,
     pub override_location: OverrideLocation,
@@ -116,7 +118,7 @@ impl Context {
     /// Reads the repository's workflows and works out what deploys.
     pub fn build(
         repo_root: &Path,
-        author: String,
+        author: Option<String>,
         settings: Settings,
     ) -> Result<Self, ContextError> {
         let location = override_location(repo_root);

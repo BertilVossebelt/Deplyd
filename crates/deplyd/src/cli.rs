@@ -31,6 +31,10 @@ pub struct Options {
     #[arg(short = 'A', long = "author", global = true, value_name = "NAME")]
     pub author: Option<String>,
 
+    /// Every author, not just yours
+    #[arg(long = "anyone", global = true, conflicts_with = "author")]
+    pub anyone: bool,
+
     /// How many changes to list
     #[arg(
         short = 'T',
