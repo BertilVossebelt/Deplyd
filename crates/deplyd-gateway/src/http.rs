@@ -1,7 +1,7 @@
 //! The GitHub half of the gateway.
 //!
-//! Callers pass a [`Route`], not a URL, and nothing here takes a method. The six
-//! variants are the six requests deplyd makes.
+//! Callers pass a [`Route`], not a URL, and nothing here takes a method. The
+//! variants are every request deplyd makes.
 
 use std::fmt;
 use std::time::Duration;
@@ -81,6 +81,8 @@ impl fmt::Display for Route {
 pub enum HttpError {
     /// The request was made and GitHub answered with a failure.
     Status { code: u16, route: String },
+    /// Refused for asking too often, with how long to wait before asking again.
+    RateLimited { route: String, wait: Duration },
     /// The request could not be made at all.
     Transport(String),
     /// No credential available.
@@ -91,6 +93,11 @@ impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HttpError::Status { code, route } => write!(f, "GitHub answered {code} for {route}"),
+            HttpError::RateLimited { route, wait } => write!(
+                f,
+                "GitHub asked for a pause of {}s before {route}",
+                wait.as_secs()
+            ),
             HttpError::Transport(why) => write!(f, "could not reach GitHub: {why}"),
             HttpError::NoCredential => write!(f, "no GitHub credential available"),
         }
@@ -109,6 +116,36 @@ pub trait Transport: Send + Sync {
 
 /// A client that can only read: the inner client is private and `get` is the only
 /// method, so nothing holding one can issue anything else.
+/// How long GitHub asked us to wait, from whichever header it used to say so.
+///
+/// `retry-after` is seconds. Failing that, a spent allowance is `remaining: 0`
+/// with `reset` as a unix time. Neither present means this 403 was about
+/// permissions, not pace, and the caller should not treat it as a pause.
+fn asked_to_wait(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let value = |name| {
+        headers
+            .get(name)
+            .and_then(|found| found.to_str().ok())
+            .map(str::trim)
+            .map(str::to_string)
+    };
+
+    if let Some(seconds) = value("retry-after").and_then(|text| text.parse::<u64>().ok()) {
+        return Some(Duration::from_secs(seconds.max(1)));
+    }
+
+    if value("x-ratelimit-remaining").as_deref() != Some("0") {
+        return None;
+    }
+    let reset = value("x-ratelimit-reset")?.parse::<u64>().ok()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    // A reset already in the past means wait a moment, not no time at all.
+    Some(Duration::from_secs(reset.saturating_sub(now).max(1)))
+}
+
 pub struct ReadOnlyHttp {
     client: reqwest::blocking::Client,
     token: String,
@@ -164,6 +201,16 @@ impl ReadOnlyHttp {
 
         let status = response.status();
         if !status.is_success() {
+            // 403 and 429 are how both rate limits arrive. A 403 for permissions
+            // carries neither header, and is left to be reported as itself.
+            if matches!(status.as_u16(), 403 | 429)
+                && let Some(wait) = asked_to_wait(response.headers())
+            {
+                return Err(HttpError::RateLimited {
+                    route: route.to_string(),
+                    wait,
+                });
+            }
             return Err(HttpError::Status {
                 code: status.as_u16(),
                 route: route.to_string(),
@@ -216,4 +263,83 @@ pub fn routes_are_read_only() -> Result<Vec<String>, Denied> {
         described.push(format!("{} - {}", route.describe(), path));
     }
     Ok(described)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::HeaderMap;
+
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(
+                reqwest::header::HeaderName::from_bytes(name.as_bytes()).expect("a header name"),
+                value.parse().expect("a header value"),
+            );
+        }
+        map
+    }
+
+    #[test]
+    fn retry_after_is_taken_at_its_word() {
+        let wait = asked_to_wait(&headers(&[("retry-after", "42")]));
+        assert_eq!(wait, Some(Duration::from_secs(42)));
+    }
+
+    #[test]
+    fn retry_after_wins_over_the_reset_time() {
+        // Secondary limits send retry-after; obeying the hour-away reset instead
+        // would stop a watcher for an hour over a momentary burst.
+        let wait = asked_to_wait(&headers(&[
+            ("retry-after", "30"),
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", "99999999999"),
+        ]));
+        assert_eq!(wait, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn a_spent_allowance_waits_for_the_reset() {
+        let soon = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock")
+            .as_secs()
+            + 120;
+        let wait = asked_to_wait(&headers(&[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", &soon.to_string()),
+        ]))
+        .expect("a wait");
+
+        assert!(
+            wait.as_secs() > 100 && wait.as_secs() <= 120,
+            "about two minutes, got {}s",
+            wait.as_secs()
+        );
+    }
+
+    #[test]
+    fn a_reset_already_past_still_waits_a_moment() {
+        let wait = asked_to_wait(&headers(&[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", "1"),
+        ]));
+        assert_eq!(
+            wait,
+            Some(Duration::from_secs(1)),
+            "never a wait of nothing"
+        );
+    }
+
+    #[test]
+    fn a_forbidden_with_allowance_left_is_not_a_pause() {
+        // 403 also means "you may not read this". Sleeping on it would turn a
+        // permissions problem into a watcher that appears to hang.
+        assert_eq!(
+            asked_to_wait(&headers(&[("x-ratelimit-remaining", "4999")])),
+            None
+        );
+        assert_eq!(asked_to_wait(&headers(&[])), None);
+    }
 }

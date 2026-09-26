@@ -112,6 +112,25 @@ pub enum Command {
     /// Whether a newer deplyd is out, and how to get it
     Update,
 
+    /// Watch for deploys, and for changes going live
+    Watch {
+        /// Stop once this pull request is live
+        #[arg(long = "pr", value_name = "NUMBER")]
+        pull_request: Option<String>,
+
+        /// Stop once this commit is live
+        #[arg(long = "commit", value_name = "REF")]
+        commit: Option<String>,
+
+        /// Stop after this long, e.g. 30m or 2h
+        #[arg(long = "for", value_name = "DURATION")]
+        duration: Option<String>,
+
+        /// How often to look, default 60s
+        #[arg(long = "every", value_name = "DURATION")]
+        every: Option<String>,
+    },
+
     /// How to remove deplyd from this machine
     Uninstall,
 
@@ -136,7 +155,7 @@ impl Command {
     pub fn supports_json(&self) -> bool {
         matches!(
             self,
-            Command::Status | Command::Pr { .. } | Command::Commit { .. }
+            Command::Status | Command::Pr { .. } | Command::Commit { .. } | Command::Watch { .. }
         )
     }
 
@@ -152,6 +171,7 @@ impl Command {
             Command::Remember { .. } => "remember",
             Command::Check => "check",
             Command::Update => "update",
+            Command::Watch { .. } => "watch",
             Command::Uninstall => "uninstall",
             Command::Completions { .. } => "completions",
             Command::Complete { .. } => "complete",
