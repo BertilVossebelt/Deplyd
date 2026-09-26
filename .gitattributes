@@ -1,0 +1,4 @@
+# A shell script checked out with CRLF will not run. Pin the ones that are executed
+# as they are, whatever the platform.
+install.sh text eol=lf
+*.sh text eol=lf
