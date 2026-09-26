@@ -1,11 +1,13 @@
 #!/bin/sh
-# Installs deplyd on macOS or Linux.
+# Installs deplyd on macOS or Linux: downloads the release, checks it, puts deplyd
+# and dp on your PATH, installs the GitHub CLI if it is missing, signs you in, and
+# turns on completion. Only installing the GitHub CLI needs root, and it asks first.
 #
 #   curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh -s -- --uninstall
 #
-# Downloads the release, checks it, puts deplyd and dp on your PATH, installs the
-# GitHub CLI if it is missing, signs you in if you are not, and turns on completion.
-# Only installing the GitHub CLI on Linux needs root, and it asks first.
+#   --uninstall          remove what the installer put there, and nothing else
+#   --purge              with --uninstall, also remove settings and cache
 #
 # To undo all of that, pass --uninstall through sh:
 #
@@ -40,13 +42,10 @@ confirm() {
     case "$answer" in '' | y | Y | yes | YES) return 0 ;; *) return 1 ;; esac
 }
 
-# For a question whose yes takes something away. DEPLYD_YES does not reach these:
-# saying yes to an install is not saying yes to removing a tool other things use.
+# Yes takes something away here, so DEPLYD_YES does not answer it.
 confirm_no() {
-    # /dev/tty can exist and still not open. Two things to dodge: the shell reports
-    # a redirection it could not make, so the group swallows that, and a redirection
-    # error on a special builtin - ':' is one - ends a non-interactive shell rather
-    # than failing. printf is not special, so this answers no instead of exiting.
+    # /dev/tty can exist and still not open. The group swallows the shell's
+    # complaint; ':' is avoided because a failed redirect on it ends the shell.
     { printf '' > /dev/tty; } 2>/dev/null || return 1
     printf '%s [y/N] ' "$1" > /dev/tty
     read -r answer < /dev/tty || return 1
@@ -65,15 +64,12 @@ case "${SHELL:-}" in
     *)      rc=""; shell="" ;;
 esac
 
-# Installing and uninstalling both start by taking out what an earlier run left, so
-# reinstalling does not stack up and uninstalling leaves nothing of ours behind.
 strip_completions() {
     { [ -n "$rc" ] && [ -f "$rc" ]; } || return 0
     if grep -qF "$START" "$rc" 2>/dev/null; then
         sed -i.deplyd-bak "/^$START\$/,/^$END\$/d" "$rc" && rm -f "$rc.deplyd-bak"
     fi
-    # A copy appended before the script carried markers ran to the end of the file,
-    # appending being the only way it got there. Cut from where it starts.
+    # An unmarked copy predates the markers and runs to the end of the file.
     first=$(grep -nE '^(command -v dp >/dev/null|_deplyd\(\)|_dp\(\)|complete -c deplyd)' "$rc" 2>/dev/null |
         head -1 | cut -d: -f1)
     if [ -n "$first" ]; then
@@ -81,8 +77,7 @@ strip_completions() {
     fi
 }
 
-# Only the line this installer appends, matched whole, so a PATH line written by
-# hand is left where it is.
+# Matched whole, so a PATH line written by hand is left alone.
 strip_path_line() {
     { [ -n "$rc" ] && [ -f "$rc" ]; } || return 0
     { grep -vxF "export PATH=\"$INSTALL_DIR:\$PATH\"" "$rc" 2>/dev/null || :; } |
@@ -92,8 +87,7 @@ strip_path_line() {
 
 # --- uninstalling -----------------------------------------------------------
 
-# dp is ours only if this installer made it: a link to the binary beside it, or a
-# copy of it. Someone else's dp keeps the name on the way out as it did going in.
+# Ours only if this installer made it: a link to the binary beside it, or a copy.
 dp_is_ours() {
     [ -e "$INSTALL_DIR/dp" ] || return 1
     if [ -L "$INSTALL_DIR/dp" ]; then
@@ -105,7 +99,6 @@ dp_is_ours() {
     [ -f "$INSTALL_DIR/deplyd" ] && cmp -s "$INSTALL_DIR/dp" "$INSTALL_DIR/deplyd"
 }
 
-# Asked, never assumed: gh may well have been here first, and other things use it.
 remove_gh() {
     command -v gh >/dev/null 2>&1 || return 0
 
@@ -116,8 +109,7 @@ remove_gh() {
         }
     fi
 
-    # Whatever happens here, the uninstall carries on: gh is not ours, and a package
-    # manager that says no about its own tool is not a reason to stop half way.
+    # gh is not ours, so a package manager saying no does not stop the uninstall.
     if [ "$(uname -s)" = "Darwin" ]; then
         command -v brew >/dev/null 2>&1 && brew uninstall gh
     elif command -v apt-get >/dev/null 2>&1; then
@@ -135,8 +127,6 @@ remove_gh() {
         return 0
     }
 
-    # Removing the tool is not ours to read as revoking access: gh keeps its sign-in
-    # in its own config, and it stays there.
     say "  gh         removed - its sign-in is still in ~/.config/gh"
 }
 
@@ -159,8 +149,7 @@ uninstall() {
         say "  deplyd     was not in $INSTALL_DIR"
     fi
 
-    # The directory itself stays. Here it defaults to ~/.local/bin, shared with
-    # everything else that installs there and never ours to have made.
+    # The directory stays: ~/.local/bin is shared, and was never ours to make.
 
     if [ -n "$rc" ] && [ -f "$rc" ]; then
         strip_completions
@@ -170,8 +159,7 @@ uninstall() {
 
     config="${XDG_CONFIG_HOME:-$HOME/.config}/deplyd"
     if [ -n "$PURGE" ]; then
-        # Guarded on the name, so a surprising XDG_CONFIG_HOME cannot point this
-        # anywhere but at a directory called deplyd.
+        # Guarded on the name, so a surprising XDG_CONFIG_HOME cannot redirect it.
         case "$config" in
             */deplyd)
                 if [ -d "$config" ]; then
@@ -184,8 +172,6 @@ uninstall() {
         say "  settings   kept in $config, --purge removes them"
     fi
 
-    # A .deplyd.json belongs to the repository it sits in, written where someone
-    # asked for it rather than put there by this script.
     say "  repos      any .deplyd.json left where it is"
 
     remove_gh
@@ -209,9 +195,7 @@ done
 
 [ -n "$UNINSTALL" ] && uninstall
 
-# Sourced by dev-install.sh, which wants the functions above and none of the work
-# below. Stopping here is all it does: there is no path that installs anything the
-# checks further down have not been through.
+# dev-install.sh wants the functions above and none of the work below.
 [ -n "${DEPLYD_SOURCE_ONLY:-}" ] && return 0
 
 need curl
@@ -255,10 +239,8 @@ say "deplyd $TAG for $TARGET"
 
 # --- the GitHub CLI ---------------------------------------------------------
 
-# Before the download rather than after it: gh is what checks the download, and a
-# binary whose provenance cannot be checked is not one to install. Only the tool is
-# wanted here. The check runs against a bundle published with the release, so it needs
-# no account and no token, and signing in can wait until deplyd is on the disk.
+# Before the download because gh is what checks it. Only the tool is wanted here:
+# the check reads a bundle published with the release, so signing in can wait.
 
 say ""
 
@@ -291,8 +273,7 @@ fi
 command -v gh >/dev/null 2>&1 || fail "The GitHub CLI is needed, to check this download and to run deplyd.
 Install it from https://cli.github.com, then run this again."
 
-# gh learned to verify attestations in 2.49. An older one cannot check, which is not
-# the same answer as a check that failed, so say which it is.
+# Verifying arrived in gh 2.49. Cannot check is not the same as check failed.
 gh attestation verify --help >/dev/null 2>&1 ||
     fail "This gh cannot check provenance - that arrived in 2.49. Update it, then run this again."
 
@@ -307,8 +288,8 @@ curl -fsSL "$BASE/$ARCHIVE" -o "$WORK/$ARCHIVE" ||
 
 # --- check it is what was published ----------------------------------------
 
-# Every release publishes SHA256SUMS, so a missing file or entry means this download
-# cannot be shown to be the published one. Refuse rather than install it anyway.
+# Every release publishes SHA256SUMS, so anything missing means this cannot be
+# shown to be the published download.
 curl -fsSL "$BASE/SHA256SUMS" -o "$WORK/SHA256SUMS" ||
     fail "Could not fetch SHA256SUMS for $TAG, so the download cannot be checked. Not installing."
 
@@ -326,16 +307,13 @@ fi
 [ "$expected" = "$actual" ] || fail "Checksum mismatch. Not installing."
 say "  checksum   ok"
 
-# Signed through Sigstore and recorded in a public log, so this says the binary came
-# from that repository's release workflow and not from somewhere else. The bundle is
-# published with the release, which is what makes this check cost nothing to run: no
-# account, no token, nothing to set up first.
+# Sigstore, recorded in a public log: this says the binary came from that repo's
+# release workflow. The bundle ships with the release, so it needs no account.
 if curl -fsSL "$BASE/$BUNDLE" -o "$WORK/$BUNDLE" 2>/dev/null; then
     gh attestation verify "$WORK/$ARCHIVE" --repo "$REPO" --bundle "$WORK/$BUNDLE" >/dev/null 2>&1 ||
         fail "Provenance check failed: $ARCHIVE is not what $REPO's release workflow built. Not installing."
 elif gh auth status >/dev/null 2>&1; then
-    # The early releases published no bundle. Ask GitHub for the attestation instead,
-    # which works but wants the sign-in those releases could assume.
+    # The early releases published no bundle, so ask the API, which wants a sign-in.
     gh attestation verify "$WORK/$ARCHIVE" --repo "$REPO" >/dev/null 2>&1 ||
         fail "Provenance check failed: $ARCHIVE is not what $REPO's release workflow built. Not installing."
 else
@@ -355,8 +333,7 @@ chmod +x "$INSTALL_DIR/deplyd"
 
 say "  installed  $INSTALL_DIR/deplyd"
 
-# dp is the short name, a symlink so it costs no disk. Someone else's dp keeps the
-# name: a tool that is already there is not ours to take.
+# A symlink, so it costs no disk. Someone else's dp keeps the name.
 existing=$(command -v dp 2>/dev/null || true)
 if [ -n "$existing" ] && [ "$existing" != "$INSTALL_DIR/dp" ]; then
     say "  dp         taken by $existing, skipped"
@@ -391,9 +368,7 @@ fi
 if [ -n "$rc" ]; then
     mkdir -p "$(dirname "$rc")"
     [ -f "$rc" ] || : > "$rc"
-    # Drop a previous block before writing this one, so reinstalling does not stack up.
     strip_completions
-    # The markers come from the binary now, so they arrive with the script.
     "$INSTALL_DIR/deplyd" completions "$shell" >> "$rc"
     say "  completion added to $rc"
 else

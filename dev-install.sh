@@ -1,22 +1,15 @@
 #!/bin/sh
-# Builds the tree and puts that build on PATH for this terminal only. Close the
-# terminal and it is gone: nothing is written to your rc file, your PATH, or the
-# directory a real install lives in.
-#
-# Source it. A script cannot change the PATH of the shell that ran it, so without
-# the leading dot the build lands and nothing points at it.
+# Builds the tree and puts that build on PATH for this terminal only. Nothing is
+# written to your rc file, your PATH, or where a real install lives. Source it: a
+# script cannot change the PATH of the shell that ran it.
 #
 #   . ./dev-install.sh              build, then use it here
 #   . ./dev-install.sh --release    the release profile, for a realistic binary
 #   . ./dev-install.sh --persist    install it for real, to test the uninstaller
 #   . ./dev-install.sh --revert     undo a --persist
 #
-# This is not the installer and never will be. install.sh takes a published release
-# and refuses anything it cannot verify; a local build is neither, so staging one is
-# a separate job with a separate name.
-#
-# Nothing here sets -e on purpose. Sourced, that would be your shell it was set on,
-# and the next command that returned non-zero would close the terminal.
+# Not the installer: that one only takes a published release and refuses what it
+# cannot verify. Nothing here sets -e, which sourced would be set on your shell.
 
 deplyd_dev() {
     # Sourced, so anything not made local is left behind in the caller's shell.
@@ -35,13 +28,11 @@ deplyd_dev() {
         esac
     done
 
-    # Sourced, $0 is the shell rather than this file, so the usual dirname does not
-    # work. Each shell keeps the path somewhere else, and the last resort is asking
-    # whether the working directory looks like the repository.
+    # Sourced, $0 is the shell, so each shell's own spelling is tried in turn.
     if [ -n "${BASH_SOURCE:-}" ]; then
         root=$(dirname -- "$BASH_SOURCE")
     elif [ -n "${ZSH_VERSION:-}" ]; then
-        # Through eval so that no other shell has to parse zsh's spelling.
+        # Through eval so no other shell has to parse zsh's spelling.
         root=$(dirname -- "$(eval 'printf %s "${(%):-%x}"')")
     else
         root=$PWD
@@ -56,8 +47,7 @@ deplyd_dev() {
     # --- the persistent kind, for working on the installer -----------------
 
     if [ -n "$persist" ] || [ -n "$revert" ]; then
-        # In a subshell: install.sh sets -e, and that is not something to hand to
-        # an interactive shell.
+        # A subshell: install.sh sets -e, not something to hand an interactive shell.
         install_dir=$(
             set -eu
             set --
@@ -85,8 +75,7 @@ deplyd_dev() {
     built="$root/target/$profile/deplyd"
     [ -f "$built" ] || { printf '\nNo binary at %s\n\n' "$built" >&2; return 1; }
 
-    # Under target, so it is gitignored and cargo clean takes it. A real install
-    # would go to ~/.local/bin; this deliberately does not.
+    # Under target, so it is gitignored and cargo clean takes it.
     if [ -n "$persist" ]; then
         destination=$install_dir
     else
@@ -135,15 +124,12 @@ deplyd_dev() {
 
     # --- this terminal only -------------------------------------------------
 
-    # Prepended, and any earlier run of this dropped first, so sourcing twice does
-    # not stack up and the build being tried is always the one in front.
+    # Earlier runs dropped first, so sourcing twice does not stack up.
     PATH=$(printf %s "$PATH" | tr ':' '\n' | grep -vxF "$destination" | tr '\n' ':' | sed 's/:$//')
     PATH="$destination:$PATH"
     export PATH
 
-    # Into this shell, so completion works for the rest of the terminal without an
-    # rc file ever being touched. fish cannot read a POSIX script, so it is on its
-    # own here.
+    # Into this shell, so no rc file is touched. fish cannot read a POSIX script.
     if [ -n "${ZSH_VERSION:-}" ]; then
         eval "$("$destination/deplyd" completions zsh)" 2>/dev/null
     elif [ -n "${BASH_VERSION:-}" ]; then
