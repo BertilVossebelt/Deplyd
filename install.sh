@@ -43,9 +43,11 @@ confirm() {
 # For a question whose yes takes something away. DEPLYD_YES does not reach these:
 # saying yes to an install is not saying yes to removing a tool other things use.
 confirm_no() {
-    # /dev/tty can exist and still not open. The shell reports a redirection it
-    # could not make, so the test has to happen inside a group that swallows it.
-    { : > /dev/tty; } 2>/dev/null || return 1
+    # /dev/tty can exist and still not open. Two things to dodge: the shell reports
+    # a redirection it could not make, so the group swallows that, and a redirection
+    # error on a special builtin - ':' is one - ends a non-interactive shell rather
+    # than failing. printf is not special, so this answers no instead of exiting.
+    { printf '' > /dev/tty; } 2>/dev/null || return 1
     printf '%s [y/N] ' "$1" > /dev/tty
     read -r answer < /dev/tty || return 1
     case "$answer" in y | Y | yes | YES) return 0 ;; *) return 1 ;; esac
@@ -206,6 +208,11 @@ Usage: install.sh [--uninstall] [--purge]" ;;
 done
 
 [ -n "$UNINSTALL" ] && uninstall
+
+# Sourced by dev-install.sh, which wants the functions above and none of the work
+# below. Stopping here is all it does: there is no path that installs anything the
+# checks further down have not been through.
+[ -n "${DEPLYD_SOURCE_ONLY:-}" ] && return 0
 
 need curl
 need tar
