@@ -1,32 +1,26 @@
-# Builds the tree and puts that build on PATH for this terminal only. Close the
-# terminal and it is gone: nothing is written to your profile, your account's PATH,
-# or the folder a real install lives in.
-#
-# Dot-source it. A script cannot change the PATH of the shell that ran it, so
-# without the leading dot the build lands and nothing points at it.
+# Builds the tree and puts that build on PATH for this terminal only. Nothing is
+# written to your profile, your account's PATH, or where a real install lives.
+# Dot-source it: a script cannot change the PATH of the shell that ran it.
 #
 #   . .\dev-install.ps1              build, then use it here
 #   . .\dev-install.ps1 -Release     the release profile, for a realistic binary
 #   . .\dev-install.ps1 -Persist     install it for real, to test the uninstaller
 #   . .\dev-install.ps1 -Revert      undo a -Persist
 #
-# This is not the installer and never will be. install.ps1 takes a published release
-# and refuses anything it cannot verify; a local build is neither, so staging one is
-# a separate job with a separate name.
+# Not the installer: that one only takes a published release and refuses what it
+# cannot verify.
 
 param(
     [switch] $Release,
     [switch] $Persist,
     [switch] $Revert,
 
-    # PowerShell spells a switch with one dash, so --persist binds to nothing.
-    # Caught here rather than ignored in silence, which looks like it worked.
+    # One dash in PowerShell, so --persist binds to nothing. Caught, not ignored.
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]] $Rest
 )
 
-# Dot-sourced, so anything set here is set in the caller's session. Put back what
-# was there, whichever way this ends.
+# Dot-sourced, so this is the caller's session. Put back what was there.
 $deplydPreviousPreference = $ErrorActionPreference
 $deplydDotSourced = $MyInvocation.InvocationName -eq '.'
 
@@ -84,16 +78,14 @@ try {
     $built = Join-Path $root "target\$profileName\deplyd.exe"
     if (-not (Test-Path $built)) { throw "No binary at $built" }
 
-    # Under target, so it is gitignored and cargo clean takes it. A real install
-    # would go to Programs\deplyd; this deliberately does not.
+    # Under target, so it is gitignored and cargo clean takes it.
     $destination = if ($Persist) { $installDir } else { Join-Path $root 'target\dev-bin' }
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
 
     $exe = Join-Path $destination 'deplyd.exe'
     $alias = Join-Path $destination 'dp.exe'
 
-    # A running deplyd holds its own file open, so replacing it can fail with
-    # nothing obviously wrong. Say which process rather than a locked-file error.
+    # A running deplyd holds its own file open. Name it, rather than a lock error.
     try {
         Copy-Item $built $exe -Force
     } catch {
@@ -139,12 +131,10 @@ try {
 
     # --- this terminal only -------------------------------------------------
 
-    # Prepended, and any earlier run of this dropped first, so sourcing twice does
-    # not stack up and the build being tried is always the one in front.
+    # Earlier runs dropped first, so sourcing twice does not stack up.
     $env:Path = (@($destination) + @($env:Path -split ';' | Where-Object { $_ -ne $destination })) -join ';'
 
-    # Register-ArgumentCompleter reaches the session from here, so completion works
-    # for the rest of this terminal without a profile ever being touched.
+    # Register-ArgumentCompleter reaches the session, so no profile is touched.
     & $exe completions powershell | Out-String | Invoke-Expression
 
     Write-Host ''

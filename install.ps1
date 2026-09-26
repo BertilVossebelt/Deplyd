@@ -1,13 +1,10 @@
-# Installs deplyd on Windows.
+# Installs deplyd on Windows: downloads the release, checks it, puts deplyd and dp
+# on your PATH, installs the GitHub CLI if it is missing, signs you in, and turns on
+# completion. Nothing needs administrator rights.
 #
 #   irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1 | iex
 #
-# Downloads the release, checks it, puts deplyd and dp on your PATH, installs the
-# GitHub CLI if it is missing, signs you in if you are not, and turns on completion.
-# Nothing needs administrator rights.
-#
-# To undo all of that. iex cannot pass a switch, so the script becomes a block first,
-# or the variable says it instead:
+# iex cannot pass a switch, so uninstalling goes through a block, or the variable:
 #
 #   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1))) -Uninstall
 #   $env:DEPLYD_UNINSTALL = 1; irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1 | iex
@@ -39,8 +36,8 @@ $installDir = if ($env:DEPLYD_INSTALL_DIR) {
     Join-Path $env:LOCALAPPDATA 'Programs\deplyd'
 }
 
-# A non-zero exit from a tool is an answer here, not a failure. pwsh 7.4 and later turn
-# one into a terminating error under the Stop preference, which would end the installer.
+# A non-zero exit is an answer here, not a failure. pwsh 7.4 turns one into a
+# terminating error under the Stop preference, which would end the installer.
 function Invoke-Native {
     param([string] $Path, [string[]] $Arguments)
 
@@ -61,16 +58,14 @@ function Confirm($question) {
     return ($answer -eq '' -or $answer -match '^[Yy]')
 }
 
-# For a question whose yes takes something away. DEPLYD_YES does not reach these:
-# saying yes to an install is not saying yes to removing a tool other things use.
+# Yes takes something away here, so DEPLYD_YES does not answer it.
 function Confirm-No($question) {
     # No terminal to ask at is an answer: leave the thing alone.
     try { $answer = Read-Host "$question [y/N]" } catch { return $false }
     return ($answer -match '^[Yy]')
 }
 
-# A terminal keeps the PATH it was started with, so a gh installed since it opened is
-# invisible until it is reopened. After PATH, look where the installers put it.
+# A terminal keeps the PATH it started with, so a gh installed since is invisible.
 function Find-Gh {
     $onPath = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue |
         Select-Object -First 1
@@ -97,8 +92,7 @@ function Fail($message) {
 $startMarker = '# >>> deplyd completions >>>'
 $endMarker = '# <<< deplyd completions <<<'
 
-# Anything the script defines, so a copy appended before it carried markers is still
-# recognised rather than left behind next to a second one.
+# Anything the script defines, so a copy predating the markers is still recognised.
 $unmarked = '^\s*(if \(-not \(Get-Command dp |\$script:Deplyd|Register-ArgumentCompleter -Native -CommandName .deplyd|function script:Deplyd)'
 
 function Remove-DeplydBlock($path) {
@@ -110,13 +104,11 @@ function Remove-DeplydBlock($path) {
         if ($line -eq $startMarker) { $inBlock = $true; continue }
         if ($line -eq $endMarker) { $inBlock = $false; continue }
         if ($inBlock) { continue }
-        # A launcher line left by the PowerShell version, whose file is long gone.
         if ($line -match 'deplyd' -and $line -match 'shell-init\.ps1') { continue }
         $kept += $line
     }
 
-    # An unmarked copy is removed whole: it runs to the end of the file, because
-    # appending is the only way it got there.
+    # An unmarked copy runs to the end of the file, appending being how it got there.
     for ($i = 0; $i -lt $kept.Count; $i++) {
         if ($kept[$i] -match $unmarked) {
             $kept = if ($i -eq 0) { @() } else { @($kept | Select-Object -First $i) }
@@ -130,7 +122,6 @@ function Remove-DeplydBlock($path) {
 # --- uninstalling -----------------------------------------------------------
 
 function Remove-Completions {
-    # The two can be the same file, and tidying it twice would say so twice.
     $paths = @($PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost) |
         Select-Object -Unique
     foreach ($path in $paths) {
@@ -155,7 +146,6 @@ function Remove-FromPath {
     }
 }
 
-# Asked, never assumed: gh may well have been here first, and other things use it.
 function Remove-Gh {
     $gh = Find-Gh
     if (-not $gh) { return }
@@ -172,8 +162,7 @@ function Remove-Gh {
         Write-Host '  gh         left alone - it came from somewhere this cannot undo' -ForegroundColor Yellow
         return
     }
-    # Whatever winget says, the uninstall carries on: gh is not ours, and a package
-    # manager that says no about its own tool is not a reason to stop half way.
+    # gh is not ours, so winget saying no does not stop the uninstall.
     $code = Invoke-Native $winget.Source @('uninstall', '--id', 'GitHub.cli', '-e',
         '--accept-source-agreements')
     if ($code -ne 0) {
@@ -181,8 +170,6 @@ function Remove-Gh {
         return
     }
 
-    # Removing the tool is not ours to read as revoking access: gh keeps its sign-in
-    # in its own config, and it stays there.
     Write-Host '  gh         removed - its sign-in is still in ~\AppData\Roaming\GitHub CLI' -ForegroundColor DarkGray
 }
 
@@ -194,8 +181,7 @@ function Invoke-Uninstall {
     $binary = Join-Path $installDir 'deplyd.exe'
     $alias = Join-Path $installDir 'dp.exe'
 
-    # dp is ours only if this installer made it: a hard link to the binary beside it,
-    # or a copy of it. Someone else's dp keeps the name on the way out as going in.
+    # Ours only if this installer made it: a hard link to the binary, or a copy.
     if (Test-Path -LiteralPath $alias) {
         $ours = $false
         if (Test-Path -LiteralPath $binary) {
@@ -217,8 +203,7 @@ function Invoke-Uninstall {
         Write-Host "  deplyd     was not in $installDir" -ForegroundColor DarkGray
     }
 
-    # Unlike the Unix default, this directory is deplyd's own, so an empty one goes
-    # too. A directory someone pointed DEPLYD_INSTALL_DIR at is left alone.
+    # Unlike ~/.local/bin, the default here is deplyd's own, so an empty one goes.
     $default = Join-Path $env:LOCALAPPDATA 'Programs\deplyd'
     if ($installDir -eq $default -and (Test-Path -LiteralPath $installDir)) {
         if (-not @(Get-ChildItem -LiteralPath $installDir -Force)) {
@@ -240,8 +225,6 @@ function Invoke-Uninstall {
         Write-Host "  settings   kept in $config, -Purge removes them" -ForegroundColor DarkGray
     }
 
-    # A .deplyd.json belongs to the repository it sits in, written where someone
-    # asked for it rather than put there by this script.
     Write-Host '  repos      any .deplyd.json left where it is' -ForegroundColor DarkGray
 
     Remove-Gh
@@ -256,9 +239,7 @@ if ($Uninstall) {
     return
 }
 
-# Dot-sourced by dev-install.ps1, which wants these functions and none of the work
-# below. Stopping here is all it does: there is no path that installs anything the
-# checks further down have not been through.
+# dev-install.ps1 wants these functions and none of the work below.
 if ($env:DEPLYD_SOURCE_ONLY) { return }
 
 # --- what are we running on -------------------------------------------------
@@ -292,10 +273,8 @@ Write-Host "deplyd $tag for $target" -ForegroundColor Cyan
 
 # --- the GitHub CLI ---------------------------------------------------------
 
-# Before the download rather than after it: gh is what checks the download, and a
-# binary whose provenance cannot be checked is not one to install. Only the tool is
-# wanted here. The check runs against a bundle published with the release, so it needs
-# no account and no token, and signing in can wait until deplyd is on the disk.
+# Before the download because gh is what checks it. Only the tool is wanted here:
+# the check reads a bundle published with the release, so signing in can wait.
 
 Write-Host ''
 
@@ -312,8 +291,7 @@ if (-not $gh) {
     Fail "The GitHub CLI is needed, to check this download and to run deplyd.`nInstall it from https://cli.github.com, then run this again."
 }
 
-# gh learned to verify attestations in 2.49. An older one cannot check, which is not
-# the same answer as a check that failed, so say which it is.
+# Verifying arrived in gh 2.49. Cannot check is not the same as check failed.
 if ((Invoke-Native $gh @('attestation', 'verify', '--help')) -ne 0) {
     Fail 'This gh cannot check provenance - that arrived in 2.49. Update it, then run this again.'
 }
@@ -333,9 +311,8 @@ try {
 
     # --- check it is what was published ------------------------------------
 
-    # Every release publishes SHA256SUMS, so a missing file or entry means this
-    # download cannot be shown to be the published one. Refuse rather than install
-    # it anyway. The fetch is the only part that throws, so only it is caught.
+    # Every release publishes SHA256SUMS, so anything missing means this cannot be
+    # shown to be the published download. Only the fetch throws, so only it is caught.
     $sumsPath = Join-Path $work 'SHA256SUMS'
     $sumsError = ''
     try {
@@ -357,10 +334,8 @@ try {
     if ($expected.ToLower() -ne $actual) { Fail 'Checksum mismatch. Not installing.' }
     Write-Host '  checksum   ok' -ForegroundColor DarkGray
 
-    # Signed through Sigstore and recorded in a public log, so this says the binary
-    # came from that repository's release workflow rather than somewhere else. The
-    # bundle is published with the release, which is what makes this check cost
-    # nothing to run: no account, no token, nothing to set up first.
+    # Sigstore, recorded in a public log: this says the binary came from that repo's
+    # release workflow. The bundle ships with the release, so it needs no account.
     $bundlePath = Join-Path $work $bundle
     $haveBundle = $true
     try {
@@ -374,8 +349,7 @@ try {
         if ((Invoke-Native $gh @('attestation', 'verify', $archivePath, '--repo', $repo,
             '--bundle', $bundlePath)) -ne 0) { Fail $badProvenance }
     } elseif ((Invoke-Native $gh @('auth', 'status')) -eq 0) {
-        # The early releases published no bundle. Ask GitHub for the attestation
-        # instead, which works but wants the sign-in those releases could assume.
+        # The early releases published no bundle, so ask the API, which wants a sign-in.
         if ((Invoke-Native $gh @('attestation', 'verify', $archivePath, '--repo', $repo)) -ne 0) {
             Fail $badProvenance
         }
@@ -396,8 +370,7 @@ try {
 
     Write-Host "  installed  $installed" -ForegroundColor DarkGray
 
-    # dp is the short name. A hard link costs no disk and needs no administrator on
-    # NTFS, unlike a symlink. Someone else's dp keeps the name.
+    # A hard link costs no disk and needs no administrator, unlike a symlink.
     $alias = Join-Path $installDir 'dp.exe'
     $existing = Get-Command dp -CommandType Application -ErrorAction SilentlyContinue |
         Select-Object -First 1
@@ -418,8 +391,7 @@ try {
 
 # --- PATH -------------------------------------------------------------------
 
-# Your PATH only, never the machine's, so this needs no administrator and affects
-# nobody else who uses this computer.
+# Your PATH only, never the machine's, so this needs no administrator.
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (($userPath -split ';') -notcontains $installDir) {
     [Environment]::SetEnvironmentVariable('Path', "$userPath;$installDir", 'User')
@@ -443,8 +415,8 @@ if ((Invoke-Native $gh @('auth', 'status')) -eq 0) {
 # --- completion -------------------------------------------------------------
 
 try {
-    # All hosts, so the VS Code terminal and the ISE get it too. Both files are
-    # cleaned, in case an earlier install wrote to the other one.
+    # All hosts, so the VS Code terminal gets it. Both cleaned, in case of an
+    # earlier install writing to the other.
     $profilePath = $PROFILE.CurrentUserAllHosts
     $otherPath = $PROFILE.CurrentUserCurrentHost
 
@@ -452,8 +424,8 @@ try {
         Set-Content -LiteralPath $otherPath -Value @(Remove-DeplydBlock $otherPath) -Encoding utf8
     }
 
-    # @() around both: a single surviving line comes back as a string, and adding an
-    # array to a string concatenates instead of appending, collapsing the file.
+    # @() around both: one surviving line comes back as a string, and adding an
+    # array to a string concatenates, collapsing the file.
     $kept = @(Remove-DeplydBlock $profilePath)
     New-Item -ItemType Directory -Path (Split-Path $profilePath) -Force | Out-Null
 
