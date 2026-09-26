@@ -331,26 +331,41 @@ about dependencies, which run with the same permissions deplyd does.
 
 ## Development
 
-**Running:**
+### Running:
 
-To try a change the way someone else would meet it, dot-source `dev-install.sh`, or
-`dev-install.ps1` on Windows:
+To try a change the way someone else would meet it, dot-source the dev installer. It
+builds the tree and puts that build on PATH for the current terminal, with completion,
+writing nothing to your profile or rc file. Close the terminal and nothing of it is
+left.
+
+**macOS and Linux**
 
 ```bash
 . ./dev-install.sh
 ```
 
-That builds the tree and puts the build on PATH for the current terminal, with
-completion, and writes nothing to your profile or rc file. Close the terminal and
-nothing of it is left. The dot matters: a script cannot change the PATH of the shell
-that ran it.
+**Windows**
 
-`--persist` installs the build the way the installer would, which is what to use
-when the installer is the thing being changed, and `--revert` undoes that. Neither
-is the installer: that one only ever takes a published release, and refuses anything
-it cannot verify.
+```powershell
+. .\dev-install.ps1
+```
 
-**Testing:**
+The dot matters: a script cannot change the PATH of the shell that ran it.
+
+Each takes its own spelling of the same three options, one dash in PowerShell and two
+in sh:
+
+|                                               | sh          | PowerShell |
+|-----------------------------------------------|-------------|------------|
+| Build with the release profile                | `--release` | `-Release` |
+| Install it for real, to work on the installer | `--persist` | `-Persist` |
+| Undo a `--persist`                            | `--revert`  | `-Revert`  |
+
+A persistent one is what `install.sh --uninstall` and `install.ps1 -Uninstall` need
+something to remove. Neither dev installer is the installer: that one only ever takes
+a published release, and refuses anything it cannot verify.
+
+### Testing:
 
 Run the tests with:
 ```bash
@@ -360,6 +375,7 @@ cargo test
 No GitHub account or network needed: fixture repositories are built with
 `GIT_ALLOW_PROTOCOL=file`, so git itself refuses ssh and https.
 
+### Releasing:
 
 Cutting a release is in [RELEASING.md](RELEASING.md).
 
