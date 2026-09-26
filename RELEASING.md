@@ -1,71 +1,85 @@
 # Releasing
 
-`.github/workflows/release.yml` runs three jobs in order. Each needs the one before it.
+`version` in the workspace `Cargo.toml` is the switch. Change it in a pull request,
+merge, and the release goes out. Merge anything else and nothing happens.
+
+```diff
+-version = "0.2.1"
++version = "0.2.2"
+```
+
+There is nothing else to do. No tag to push, no workflow to start, no release to
+write. Deciding the number is the only judgement involved.
+
+## What runs
+
+`.github/workflows/release.yml`, on every push to `main`. Each job needs the one
+before it.
 
 | Job       | Does                                                                   |
 |-----------|------------------------------------------------------------------------|
+| `decide`  | Works out the version, and whether it has been released already        |
 | `guard`   | `cargo fmt --check`, `clippy -D warnings`, `cargo test`, then `deplyd check` on the built binary |
 | `build`   | Five targets, each archived and uploaded as an artifact                |
-| `publish` | Checksums, Sigstore attestation, creates the release                   |
+| `publish` | Checksums, Sigstore attestation, creates the tag and the release       |
 
-`publish` is gated on `if: github.event_name == 'push'`. A `workflow_dispatch` is a
-rehearsal: it stops after `build` and publishes nothing.
+`decide` compares the version against the releases that exist. A merge that left it
+alone stops there, because CI has already run on that commit and there is nothing to
+publish.
 
-The guard runs again in CI on purpose. The attestation says a binary came from a
-commit; the guard job is what makes that worth anything, by recording what was true of
-that commit before it was signed.
+The guard runs again even though CI ran on the pull request. The attestation says a
+binary came from a commit; the guard job is what makes that worth anything, by
+recording what was true of that commit before it was signed.
 
-## Steps
+## Rehearsing
 
-Run the same checks the guard will, so a push does not fail on something local would
-have caught:
-
-```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --all-targets
-```
-
-Bump `version` in the workspace `Cargo.toml`, commit, and push `main`. Then rehearse:
+Builds every target and publishes nothing:
 
 ```bash
-gh workflow run release.yml -f version=v0.2.0
+gh workflow run release.yml -f version=v0.2.2
 gh run watch <id>
 ```
 
-Green, so tag it. The tag is what publishes:
+Worth doing after changing the workflow itself, or the pinned action versions. It
+cannot prove `download-artifact`, the attestation or `gh release create`, which only
+run when something is actually published.
 
-```bash
-git tag -a v0.2.0 -m "deplyd 0.2.0"
-git push origin v0.2.0
-gh run watch <id>
+## Prereleases
+
+A version with a suffix is published as a prerelease, so it does not become what
+"latest release" means and the installers keep ignoring it:
+
+```
+version = "0.3.0-rc.1"
 ```
 
-Then check what came out, and install it the way anyone else would:
+Cargo accepts that, and so does this.
+
+## By hand
+
+Pushing a tag still works, and skips the version check:
 
 ```bash
-gh release view v0.2.0
-gh attestation verify <file> --repo BertilVossebelt/Deplyd
+git tag -a v0.2.2 -m "deplyd 0.2.2"
+git push origin v0.2.2
 ```
 
 ## When it fails
 
-A tag that published nothing has to go before you can reuse it:
+Nothing is published unless `guard` and all five builds pass, so a failure normally
+leaves nothing behind: fix it and merge again. If it failed after the release was
+created, remove it and the tag before reusing the version:
 
 ```bash
-gh release delete v0.2.0 --yes    # only if a release object was created
-git push origin :v0.2.0
-git tag -d v0.2.0
+gh release delete v0.2.2 --cleanup-tag --yes
 ```
-
-Fix, tag, push again.
 
 ## Notes
 
 `aarch64-unknown-linux-gnu` is `optional: true`. If arm64 runners are unavailable to
 the account, the release goes out with four binaries rather than not at all.
 
-The action versions are pinned and behind. Bump them on their own, never alongside a
-release: a rehearsal exercises `upload-artifact`, but `download-artifact`, the
-attestation and `gh release create` only ever run on a real tag, so that is the one
-part no rehearsal can prove.
+Bump the pinned action versions on their own, never in the same change as a release.
+A rehearsal exercises `upload-artifact`, but `download-artifact`, the attestation and
+`gh release create` only ever run on a real publish, so that is the part no rehearsal
+can prove.
