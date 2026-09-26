@@ -21,7 +21,7 @@ before it.
 | `decide`  | Works out the version, and whether it has been released already        |
 | `guard`   | `cargo fmt --check`, `clippy -D warnings`, `cargo test`, then `deplyd check` on the built binary |
 | `build`   | Five targets, each archived and uploaded as an artifact                |
-| `publish` | Checksums, Sigstore attestation, creates the tag and the release       |
+| `publish` | Checksums, Sigstore attestation, checks it verifies, creates the tag and the release |
 
 `decide` compares the version against the releases that exist. A merge that left it
 alone stops there, because CI has already run on that commit and there is nothing to
@@ -63,6 +63,18 @@ Pushing a tag still works, and skips the version check:
 git tag -a v0.2.2 -m "deplyd 0.2.2"
 git push origin v0.2.2
 ```
+
+## Checking what came out
+
+```bash
+gh release view v0.2.2
+gh attestation verify <file> --repo BertilVossebelt/Deplyd --bundle attestation.json
+```
+
+`--bundle` is the check the installer runs: it reads `attestation.json`, published
+with the release, rather than asking GitHub for it, so it needs no account and no
+token. Leave the flag off to check against the API instead, which wants a sign-in.
+`publish` runs the same check over every archive before the release is created.
 
 ## When it fails
 

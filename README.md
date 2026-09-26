@@ -42,8 +42,10 @@ Commit SHAs and run numbers are links where the terminal supports them.
 
 ## Install
 
-One command. It installs deplyd and `dp`, puts them on your PATH, installs the GitHub
-CLI if you have not got it, signs you in, and turns on tab completion.
+One command. It installs the GitHub CLI if you have not got it, checks the download
+against the published checksum and signature, installs deplyd and `dp`, puts them on
+your PATH, signs you in, and turns on tab completion. A download that does not check
+out is not installed, and checking it needs no account and no token.
 
 **macOS and Linux**
 
@@ -86,10 +88,11 @@ create a personal access token: on an organisation repository that can need an o
 approval, and needing permission from someone is the thing this tool exists to avoid.
 In CI, `GITHUB_TOKEN` is used instead, so there is no login step there.
 
-Every release is signed and recorded in a public transparency log:
+Every release is signed and recorded in a public transparency log. Each one also
+publishes the signature as `attestation.json`, which checks without signing in:
 
 ```bash
-gh attestation verify deplyd --repo BertilVossebelt/Deplyd
+gh attestation verify deplyd --repo BertilVossebelt/Deplyd --bundle attestation.json
 ```
 
 ## Usage
