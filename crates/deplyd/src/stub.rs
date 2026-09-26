@@ -33,6 +33,7 @@ impl FileTransport {
                 format!("statuses-{deployment_id}.json")
             }
             Route::PullRequest { number } => format!("pr-{number}.json"),
+            Route::LatestRelease => "latest-release.json".to_string(),
         }
     }
 }

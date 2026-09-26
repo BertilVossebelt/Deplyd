@@ -72,6 +72,23 @@ Then open a new terminal, and from inside any repo:
 dp status
 ```
 
+## Updating
+
+Run the installer again. It replaces the binary where it already is, so there is no
+need to uninstall first:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1 | iex
+```
+
+`dp update` asks which release is newest, says whether this is it, and prints the
+line above for the machine you are on. Printing is all it does, for the same reason
+`dp uninstall` does: deplyd does not write outside its own config.
+
 ## Uninstall
 
 The installer takes back what it put there, and nothing else.
@@ -135,6 +152,8 @@ Run it from inside any repo.
 | `deplyd remember`       | keep a default author, environment or repo           |
 | `deplyd completions`    | shell completion scripts                             |
 | `deplyd check`          | prove it can only read                               |
+| `deplyd update`         | whether a newer release is out, and how to get it    |
+| `deplyd uninstall`      | how to remove deplyd from this machine               |
 
 `dp` is the same binary under a shorter name. Commands shorten too, while they stay
 unambiguous, so `dp env` and `dp auth` work.

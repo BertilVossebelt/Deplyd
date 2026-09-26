@@ -29,6 +29,10 @@ use render::Output;
 use term::WebBase;
 
 const GITHUB_API: &str = "https://api.github.com";
+/// Where deplyd itself is published, for the update check and the two signposts.
+const DEPLYD_OWNER: &str = "BertilVossebelt";
+const DEPLYD_NAME: &str = "Deplyd";
+const DEPLYD_RAW: &str = "https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main";
 
 fn main() -> ExitCode {
     // A weakened build must not reach a repository at all. Microseconds.
@@ -64,6 +68,10 @@ fn main() -> ExitCode {
         }
         Command::Uninstall => {
             show_uninstall();
+            return ExitCode::SUCCESS;
+        }
+        Command::Update => {
+            show_update();
             return ExitCode::SUCCESS;
         }
         Command::Completions { shell } => {
@@ -696,6 +704,56 @@ fn show_help() {
 /// A signpost, not a deed. deplyd never deletes - `check` says so and the build
 /// guard enforces it - so removing it stays the installer's job, and this prints
 /// the line that does it.
+/// The line that installs the newest release. Installing over an existing copy is
+/// the update, so there is nothing separate to print.
+fn install_line() -> String {
+    if cfg!(windows) {
+        format!("irm {DEPLYD_RAW}/install.ps1 | iex")
+    } else {
+        format!("curl -fsSL {DEPLYD_RAW}/install.sh | sh")
+    }
+}
+
+/// Asks which release is newest and says whether this is it. Another signpost:
+/// replacing the binary is the installer's job, because deplyd does not write
+/// outside its own config.
+fn show_update() {
+    let current = env!("CARGO_PKG_VERSION");
+
+    let asking = |transport| {
+        GitHub::new(transport, DEPLYD_OWNER.into(), DEPLYD_NAME.into()).latest_release()
+    };
+    let latest = match stub::FileTransport::from_environment() {
+        Some(files) => asking(Box::new(files)),
+        None => credential::find()
+            .ok()
+            .and_then(|found| ReadOnlyHttp::new(found.token, GITHUB_API.to_string()).ok())
+            .and_then(|http| asking(Box::new(http))),
+    };
+
+    println!();
+    println!("{}deplyd {current}{:#}", term::CYAN, term::CYAN);
+    println!();
+
+    match latest.as_deref() {
+        Some(tag) if tag.trim_start_matches('v') == current => {
+            println!("  Up to date: {tag} is the newest release.");
+            println!();
+            return;
+        }
+        Some(tag) => println!("  {tag} is out. To update, run:"),
+        // Not being able to ask is not the same as being current, so it says which.
+        None => println!("  Could not ask which release is newest. To update, run:"),
+    }
+
+    println!();
+    println!("  {}", install_line());
+    println!();
+    println!("  That replaces the binary where it already is. Uninstalling first is");
+    println!("  not needed, and deplyd cannot do it itself: see deplyd check.");
+    println!();
+}
+
 fn show_uninstall() {
     println!();
     println!("{}Removing deplyd{:#}", term::CYAN, term::CYAN);
@@ -703,7 +761,7 @@ fn show_uninstall() {
     println!("  The installer takes back what it put there. Run:");
     println!();
 
-    let repo = "https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main";
+    let repo = DEPLYD_RAW;
     if cfg!(windows) {
         println!("  & ([scriptblock]::Create((irm {repo}/install.ps1))) -Uninstall");
         println!();

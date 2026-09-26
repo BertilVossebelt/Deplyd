@@ -237,6 +237,7 @@ impl StubGitHub {
                 format!("statuses:{deployment_id}")
             }
             Route::PullRequest { number } => format!("pr:{number}"),
+            Route::LatestRelease => "latest-release".to_string(),
         }
     }
 }

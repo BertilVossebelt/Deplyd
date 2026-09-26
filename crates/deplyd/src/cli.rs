@@ -105,6 +105,9 @@ pub enum Command {
     /// Prove it can only read
     Check,
 
+    /// Whether a newer deplyd is out, and how to get it
+    Update,
+
     /// How to remove deplyd from this machine
     Uninstall,
 
@@ -144,6 +147,7 @@ impl Command {
             Command::Init => "init",
             Command::Remember { .. } => "remember",
             Command::Check => "check",
+            Command::Update => "update",
             Command::Uninstall => "uninstall",
             Command::Completions { .. } => "completions",
             Command::Complete { .. } => "complete",
