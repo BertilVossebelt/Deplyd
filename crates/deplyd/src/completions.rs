@@ -80,29 +80,58 @@ fn pairs(values: impl IntoIterator<Item = (String, String)>) -> String {
         .join("\n")
 }
 
-fn powershell(command: &mut ClapCommand) {
-    let subcommands = pairs(
-        command
-            .get_subcommands()
-            .filter(|sub| !sub.is_hide_set())
-            .map(|sub| {
-                (
-                    sub.get_name().to_string(),
-                    sub.get_about().map(|a| a.to_string()).unwrap_or_default(),
-                )
-            }),
-    );
+/// The visible subcommands of one command, as name and description.
+fn children(command: &ClapCommand) -> Vec<(String, String)> {
+    command
+        .get_subcommands()
+        .filter(|sub| !sub.is_hide_set())
+        .map(|sub| {
+            (
+                sub.get_name().to_string(),
+                sub.get_about().map(|a| a.to_string()).unwrap_or_default(),
+            )
+        })
+        .collect()
+}
 
-    let mut flags = Vec::new();
-    let mut value_flags = Vec::new();
-    for arg in command.get_arguments() {
-        if arg.is_hide_set() {
-            continue;
-        }
+fn powershell(command: &mut ClapCommand) {
+    let subcommands = pairs(children(command));
+
+    // A hashtable so the second word can be completed for any verb that nests,
+    // rather than a branch per verb that goes stale when one is added.
+    let nested = command
+        .get_subcommands()
+        .filter(|sub| !sub.is_hide_set())
+        .filter_map(|sub| {
+            let own = children(sub);
+            (!own.is_empty()).then(|| {
+                format!(
+                    "    '{}' = @(\n{}\n    )",
+                    sub.get_name(),
+                    pairs(own)
+                        .lines()
+                        .map(|line| format!("    {line}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Options hang off the verbs that use them, so the whole tree is walked.
+    // Which verb accepts which is clap's business at parse time; completion
+    // only has to know a spelling when it sees one.
+    let mut flags: Vec<(String, String)> = Vec::new();
+    let mut value_flags: Vec<String> = Vec::new();
+    for arg in arguments(command) {
         let about = arg.get_help().map(|h| h.to_string()).unwrap_or_default();
         let takes_value = arg.get_num_args().is_none_or(|range| range.takes_values());
 
         for spelling in spellings(arg) {
+            if flags.iter().any(|(seen, _)| seen == &spelling) {
+                continue;
+            }
             if takes_value {
                 value_flags.push(spelling.clone());
             }
@@ -124,6 +153,10 @@ fn powershell(command: &mut ClapCommand) {
 $script:DeplydCommands = @(
 {subcommands}
 )
+
+$script:DeplydNested = @{{
+{nested}
+}}
 
 $script:DeplydFlags = @(
 {flags}
@@ -220,6 +253,15 @@ Register-ArgumentCompleter -Native -CommandName {names} -ScriptBlock {{
     $subcommand = if ($subcommand.Count -ge 1) {{ $subcommand[0] }} else {{ '' }}
 
     if ($words.Count -eq 1) {{
+        if ($script:DeplydNested.ContainsKey($subcommand)) {{
+            return $script:DeplydNested[$subcommand] |
+                Where-Object {{ $_.Name.StartsWith($word, [StringComparison]::OrdinalIgnoreCase) }} |
+                ForEach-Object {{
+                    [System.Management.Automation.CompletionResult]::new(
+                        $_.Name, $_.Name, 'ParameterValue',
+                        $(if ($_.Description) {{ $_.Description }} else {{ $_.Name }}))
+                }}
+        }}
         switch ($subcommand) {{
             'remember'    {{ return script:DeplydResults @('author', 'environment', 'repo') $word }}
             'completions' {{ return script:DeplydResults @({shells}) $word }}
@@ -236,6 +278,7 @@ Register-ArgumentCompleter -Native -CommandName {names} -ScriptBlock {{
 }}
 "#,
         subcommands = subcommands,
+        nested = nested,
         flags = pairs(flags),
         value_flags = list(value_flags),
         environment_flags = environment_flags,
@@ -243,6 +286,18 @@ Register-ArgumentCompleter -Native -CommandName {names} -ScriptBlock {{
         names = list(NAMES.iter().map(|name| name.to_string())),
         shells = shells,
     );
+}
+
+/// Every visible argument in the tree, outermost first, duplicates included.
+fn arguments(command: &ClapCommand) -> Vec<&clap::Arg> {
+    let mut found: Vec<&clap::Arg> = command
+        .get_arguments()
+        .filter(|arg| !arg.is_hide_set())
+        .collect();
+    for sub in command.get_subcommands().filter(|sub| !sub.is_hide_set()) {
+        found.extend(arguments(sub));
+    }
+    found
 }
 
 /// Every way one argument can be written: `--author` and `-A`.
@@ -258,8 +313,8 @@ fn spellings(arg: &clap::Arg) -> Vec<String> {
 }
 
 fn flag_spellings(command: &ClapCommand, id: &str) -> Vec<String> {
-    command
-        .get_arguments()
+    arguments(command)
+        .into_iter()
         .find(|arg| arg.get_id() == id)
         .map(spellings)
         .unwrap_or_default()

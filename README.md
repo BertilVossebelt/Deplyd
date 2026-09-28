@@ -15,7 +15,7 @@ authority over the deploy workflows, no pipeline step you are allowed to add. It
 installs nothing into your repository.
 
 ```
-$ deplyd pr 412
+$ deplyd status pr 412
 Inspecting production deploys...
 
 production  ·  2 targets
@@ -67,36 +67,55 @@ in with `gh auth login` and add completion with `deplyd completions <shell>`.
 
 Run it from inside any repo.
 
-| Command                 |                                                      |
-|-------------------------|------------------------------------------------------|
-| `deplyd status`         | the last deployed commit, and your changes in it     |
-| `deplyd pr 412`         | is that pull request live?                           |
-| `deplyd commit a1b2c3d` | is that commit live? takes any ref, including `HEAD` |
-| `deplyd watch`          | deploys and changes going live, as they happen       |
-| `deplyd environments`   | environments that `-E` accepts                       |
-| `deplyd authors`        | names that `-A` accepts                              |
-| `deplyd config`         | what detection concluded about this repo             |
-| `deplyd init`           | write that conclusion to a file you can correct      |
-| `deplyd remember`       | keep a default author, environment or repo           |
-| `deplyd completions`    | shell completion scripts                             |
-| `deplyd check`          | prove it can only read                               |
-| `deplyd update`         | whether a newer release is out                       |
-| `deplyd uninstall`      | how to remove it from this machine                   |
+Four verbs take a second word. The first word says what you want, the second says
+what about.
 
-`dp` is the same binary under a shorter name. Commands shorten too, while they stay
-unambiguous, so `dp env` and `dp auth` work.
+```
+deplyd status                     the last deployed commit, and your changes in it
+       status pr 412              is that pull request live?
+       status commit a1b2c3d      is that commit live? any ref, HEAD included
 
-| Option                    |                                                   |
-|---------------------------|---------------------------------------------------|
-| `-E, --environment <env>` | environment, or a prefix: `-E prod`, `-E stag`    |
-| `-A, --author <name>`     | author, default `git config user.name`            |
-| `--anyone`                | every author, not just yours                      |
-| `-T, --take <n>`          | how many to list per list, default 10             |
-| `-S, --skip <n>`          | skip this many, for paging                        |
-| `-D, --depth <n>`         | how far back to read per target, default 200      |
-| `--repo-path <path>`      | repo to inspect, default the current directory    |
-| `-J, --json`              | machine-readable output, for `status` and `pr`    |
-| `-F, --force`             | let `init` rewrite a file that already exists     |
+       watch                      deploys and changes going live, as they happen
+       watch pr 412               the same, until that pull request is live
+       watch commit a1b2c3d       the same, for any ref
+
+       list environments          environments that -E accepts
+       list authors               names that -A accepts
+
+       config                     what detection concluded about this repo
+       config init                write that out as a file you can correct
+```
+
+The rest stand alone.
+
+| Command              |                                            |
+|----------------------|--------------------------------------------|
+| `deplyd remember`    | keep a default author, environment or repo |
+| `deplyd completions` | shell completion scripts                   |
+| `deplyd check`       | prove it can only read                     |
+| `deplyd update`      | whether a newer release is out             |
+| `deplyd uninstall`   | how to remove it from this machine         |
+
+`dp` is the same binary under a shorter name. Both words shorten while they stay
+unambiguous, so `dp li env` and `dp st pr 412` work.
+
+Every verb offers only the options it acts on, so `deplyd <verb> --help` is the
+short list that applies to it.
+
+| Option                    | Taken by                                         |
+|---------------------------|--------------------------------------------------|
+| `-E, --environment <env>` | `status`, `watch`, `config`; a prefix will do    |
+| `-A, --author <name>`     | the same, default `git config user.name`         |
+| `--anyone`                | the same, every author rather than yours         |
+| `-D, --depth <n>`         | `status`, `watch`; how far back, default 200     |
+| `-T, --take <n>`          | `status`, `watch`; how many to list, default 10  |
+| `-S, --skip <n>`          | `status`, `watch`; skip this many, for paging    |
+| `-J, --json`              | `status`, `watch`; machine-readable output       |
+| `--repo-path <path>`      | anything that opens a repo, default the cwd      |
+| `-F, --force`             | `config init`, to rewrite a file that exists     |
+| `-h, --help`              | anything; on `status` and `watch` it also        |
+|                           | explains the words the report uses               |
+| `-V, --version`           | which deplyd this is                             |
 
 Defaults can be kept:
 
@@ -119,7 +138,8 @@ succeeding or failing, and a change crossing from pending to live. `-E`, `-A` an
 
 ```bash
 deplyd watch --anyone -E production
-deplyd watch --pr 412 --for 2h        # exits 0 the moment it is live
+deplyd watch pr 412 --for 2h          # exits 0 the moment it is live
+deplyd watch commit HEAD              # the same, for any ref
 deplyd watch --every 5m --json        # one JSON object per line, per event
 ```
 
@@ -127,8 +147,6 @@ deplyd watch --every 5m --json        # one JSON object per line, per event
 |----------------------|-------------------------------------------|
 | `--every <duration>` | how often to look, default 60s, floor 10s |
 | `--for <duration>`   | stop after this long                      |
-| `--pr <number>`      | stop once that pull request is live       |
-| `--commit <ref>`     | stop once that commit is live             |
 
 Every look costs API requests, more of them the more deploy workflows a repo has, out
 of an hourly allowance shared with `gh`. So be careful not to run it too fast for
@@ -136,10 +154,10 @@ too long. Especially if you have a lot of deploy workflows.
 
 ## In a script
 
-`pr` and `commit` exit on their verdict, so no parsing is needed:
+`status pr` and `status commit` exit on their verdict, so no parsing is needed:
 
 ```bash
-deplyd pr 412 -E production || echo "not deployed"
+deplyd status pr 412 -E production || echo "not deployed"
 ```
 
 | Exit |                                                              |
@@ -186,7 +204,8 @@ server can prove the process actually cycled, which is why it is not `VERIFIED`.
 ## Adapting it to your repo
 
 GitHub Actions is flexible enough that detection will not always land. `deplyd config`
-shows what it concluded; `deplyd init` writes that out as a file you can correct. Every
+shows what it concluded; `deplyd config init` writes that out as a file you can
+correct. Every
 key is optional. Move it to the repo root as `.deplyd.json` and commit it to share the
 fixes.
 

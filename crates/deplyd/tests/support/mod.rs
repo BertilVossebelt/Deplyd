@@ -57,11 +57,21 @@ impl Sandbox {
     /// person sees.
     pub fn deplyd(&self, args: &[&str]) -> String {
         let mut all: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
-        all.push("--repo-path".into());
-        all.push(self.repo().to_string_lossy().into_owned());
+        // Only the verbs that open a repo offer the flag, so only they get it.
+        // The rest already run with the sandbox as their working directory.
+        if self.takes_repo_path(args) {
+            all.push("--repo-path".into());
+            all.push(self.repo().to_string_lossy().into_owned());
+        }
 
         let output = self.spawn(env!("CARGO_BIN_EXE_deplyd"), &all);
         format!("{}{}", output.0, output.1)
+    }
+
+    fn takes_repo_path(&self, args: &[&str]) -> bool {
+        args.first().is_some_and(|verb| {
+            matches!(*verb, "status" | "watch" | "list" | "config" | "complete")
+        })
     }
 
     fn git(&self, args: &[&str]) {
@@ -185,8 +195,10 @@ impl Sandbox {
     /// Runs deplyd against the stubbed GitHub, returning output and exit code.
     pub fn deplyd_stubbed(&self, args: &[&str]) -> (String, i32) {
         let mut all: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
-        all.push("--repo-path".into());
-        all.push(self.repo().to_string_lossy().into_owned());
+        if self.takes_repo_path(args) {
+            all.push("--repo-path".into());
+            all.push(self.repo().to_string_lossy().into_owned());
+        }
         self.spawn_with_stub(env!("CARGO_BIN_EXE_deplyd"), &all)
     }
 
@@ -283,8 +295,10 @@ impl Sandbox {
     pub fn deplyd_stdout(&self, args: &[&str]) -> String {
         let home = self.root.join("home");
         let mut all: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
-        all.push("--repo-path".into());
-        all.push(self.repo().to_string_lossy().into_owned());
+        if self.takes_repo_path(args) {
+            all.push("--repo-path".into());
+            all.push(self.repo().to_string_lossy().into_owned());
+        }
 
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_deplyd"))
             .args(&all)
