@@ -295,3 +295,59 @@ jobs:
       - name: Ship
         run: echo ship
 ";
+
+#[test]
+fn dates_are_shown_in_one_timezone_whatever_the_commit_recorded() {
+    // A merge made on github.com records UTC; a commit made at a desk records
+    // that desk's offset. Rendering each in the zone it happens to carry put the
+    // date column out of order with none of the times being wrong, which reads
+    // as a sorting bug and is not one.
+    let sandbox = support::Sandbox::new("mixed-zones");
+
+    // The same instant, written two ways.
+    sandbox.commit_at(
+        "a.txt",
+        "one",
+        "recorded in UTC",
+        "2026-01-02T12:00:00+00:00",
+    );
+    sandbox.commit_at(
+        "b.txt",
+        "two",
+        "recorded in +02:00",
+        "2026-01-02T14:00:00+02:00",
+    );
+
+    let repo = deplyd_core::repo::Repo::discover(&sandbox.path()).expect("repo");
+    let found = deplyd_core::report::records(&repo, &["HEAD"], &[], "API", None).expect("records");
+
+    let dated: Vec<(&str, &str)> = found
+        .iter()
+        .map(|entry| (entry.subject.as_str(), entry.date.as_str()))
+        .collect();
+    let utc = dated
+        .iter()
+        .find(|(subject, _)| subject.contains("UTC"))
+        .expect("the UTC commit");
+    let offset = dated
+        .iter()
+        .find(|(subject, _)| subject.contains("+02:00"))
+        .expect("the offset commit");
+
+    assert_eq!(
+        utc.1, offset.1,
+        "the same instant must print the same way: {dated:?}"
+    );
+
+    // And the column agrees with the instants behind it, which is the thing a
+    // reader is actually relying on.
+    let mut by_instant = found.clone();
+    by_instant.sort_by_key(|entry| entry.when);
+    let mut by_shown = found.clone();
+    by_shown.sort_by(|a, b| a.date.cmp(&b.date).then(a.when.cmp(&b.when)));
+    assert_eq!(
+        by_instant.iter().map(|e| e.sha.clone()).collect::<Vec<_>>(),
+        by_shown.iter().map(|e| e.sha.clone()).collect::<Vec<_>>(),
+        "what is shown must order the same as what happened"
+    );
+}

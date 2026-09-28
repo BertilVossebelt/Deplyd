@@ -266,6 +266,17 @@ impl Repo {
     /// Whether git tracks a path. Asked rather than assumed: deplyd has no idea how a
     /// `.deplyd.json` came to be in a repository, and saying something is committed
     /// when it is not is the kind of claim the rest of the tool refuses to make.
+    /// Whether any tracked file lives under this path.
+    ///
+    /// A scope read out of a workflow is only a scope if the repository has it.
+    /// `working-directory: artifacts` is a directory the run downloads into, not
+    /// somewhere code lives, and taking it at face value covers nothing.
+    pub fn holds_path(&self, path: &str) -> bool {
+        self.run(Verb::LsFiles, &["--", path])
+            .map(|output| output.ok && !output.stdout.trim().is_empty())
+            .unwrap_or(false)
+    }
+
     pub fn is_tracked(&self, path: &Path) -> bool {
         let Some(text) = path.to_str() else {
             return false;

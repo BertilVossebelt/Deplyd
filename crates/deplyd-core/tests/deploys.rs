@@ -262,7 +262,13 @@ fn plumbing_jobs_and_short_jobs_are_not_targets() {
     assert_eq!(labels, vec!["API"], "only the real deploy job");
 
     assert!(set.ignored_jobs.contains_key("notify-slack"));
-    assert!(set.ignored_jobs["tiny"].contains("three steps"));
+    // This workflow has evidence - deploy-api declares an environment - so the
+    // gate a job fails first is now the evidence one, not the step count.
+    assert!(
+        set.ignored_jobs["tiny"].contains("ships"),
+        "got: {}",
+        set.ignored_jobs["tiny"]
+    );
     // A failed job is not a target and is not an explained skip either: it simply did
     // not deploy.
     assert!(!set.ignored_jobs.contains_key("deploy-web"));
@@ -762,4 +768,212 @@ fn a_commit_outside_every_scope_is_not_covered() {
 
     let report = verdict::commit_report(&context, &world.repo, &set, &elsewhere);
     assert_eq!(report.status, Status::NotCovered);
+}
+
+/// A workflow with no job declaring an environment and no step running anything
+/// recognisable. Shipping happens, but by a route no list can know.
+const UNRECOGNISABLE_WORKFLOW: &str = "name: Deploy production
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy-api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: echo build
+      - name: Ship it
+        run: ./bespoke-deploy.sh --now
+";
+
+#[test]
+fn a_workflow_that_shows_no_evidence_still_reports_something() {
+    // Nothing here ships by any route deplyd can recognise, so there is nothing
+    // to be strict with. Guessing beats reporting a repository with no targets,
+    // which is the one answer that helps nobody.
+    let world = World::new("no-evidence", UNRECOGNISABLE_WORKFLOW);
+    let deployed = world.sandbox.head();
+
+    let stub = StubGitHub::new()
+        .runs(
+            "deploy-production.yml",
+            &[StubRun::success(110, "2026-01-02T00:00:00Z", &deployed)],
+        )
+        .jobs(
+            110,
+            &[
+                StubJob::deploy(910, "deploy-api"),
+                StubJob::deploy(911, "tiny").with_steps(vec![("only", "success")]),
+            ],
+        );
+
+    let github = GitHub::new(Box::new(stub), "acme".into(), "widgets".into());
+    let context = world.context("production");
+    let runs = runs_for(&github, "deploy-production.yml", false);
+    let set = build_targets(&context, &world.repo, &github, &runs);
+
+    let labels: Vec<&str> = set.targets.iter().map(|t| t.label.as_str()).collect();
+    assert_eq!(labels, vec!["API"], "the fallback still finds the real one");
+
+    // And with no evidence to go on, the older rules are what is left.
+    assert!(
+        set.ignored_jobs["tiny"].contains("three steps"),
+        "got: {}",
+        set.ignored_jobs["tiny"]
+    );
+}
+
+#[test]
+fn target_jobs_puts_back_a_job_detection_will_not_credit() {
+    // The escape hatch that lets detection be strict at all. A release workflow
+    // that ships by some bespoke route gets one line of config rather than the
+    // six it used to take to remove what strictness now leaves out.
+    let world = World::new("insisted", PLAIN_WORKFLOW);
+    let deployed = world.sandbox.head();
+
+    std::fs::write(
+        world.sandbox.path().join(".deplyd.json"),
+        r#"{ "targetJobs": ["smoke"] }"#,
+    )
+    .expect("write");
+
+    let stub = StubGitHub::new()
+        .runs(
+            "deploy-production.yml",
+            &[StubRun::success(120, "2026-01-02T00:00:00Z", &deployed)],
+        )
+        .jobs(
+            120,
+            &[
+                StubJob::deploy(920, "deploy-api"),
+                StubJob::deploy(921, "smoke-production"),
+            ],
+        );
+
+    let github = GitHub::new(Box::new(stub), "acme".into(), "widgets".into());
+    let context = world.context("production");
+    let runs = runs_for(&github, "deploy-production.yml", false);
+    let set = build_targets(&context, &world.repo, &github, &runs);
+
+    let labels: Vec<&str> = set.targets.iter().map(|t| t.label.as_str()).collect();
+    assert!(
+        labels.contains(&"SMOKE-PRODUCTION"),
+        "the named job should be a target despite showing nothing: {labels:?}"
+    );
+}
+
+/// One job that plainly ships, and one that hands the work to another workflow.
+const MIXED_WORKFLOW: &str = "name: Deploy production
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy-api:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: echo build
+      - name: Ship
+        run: echo ship
+  deploy-web:
+    uses: acme/shared/.github/workflows/deploy.yml@main
+    secrets: inherit
+";
+
+#[test]
+fn a_job_handing_off_to_another_workflow_keeps_the_benefit_of_the_doubt() {
+    // Its steps live in a file deplyd cannot see, so there is no evidence to
+    // find and none to hold against it. Dropping it would lose the real deploy
+    // and keep the job beside it, which is the wrong way round.
+    let world = World::new("handoff", MIXED_WORKFLOW);
+    let deployed = world.sandbox.head();
+
+    let stub = StubGitHub::new()
+        .runs(
+            "deploy-production.yml",
+            &[StubRun::success(130, "2026-01-02T00:00:00Z", &deployed)],
+        )
+        .jobs(
+            130,
+            &[
+                StubJob::deploy(930, "deploy-api"),
+                StubJob::deploy(931, "deploy-web"),
+            ],
+        );
+
+    let github = GitHub::new(Box::new(stub), "acme".into(), "widgets".into());
+    let context = world.context("production");
+    let runs = runs_for(&github, "deploy-production.yml", false);
+    let set = build_targets(&context, &world.repo, &github, &runs);
+
+    let mut labels: Vec<&str> = set.targets.iter().map(|t| t.label.as_str()).collect();
+    labels.sort_unstable();
+    assert_eq!(
+        labels,
+        vec!["API", "WEB"],
+        "the handed-off job is a target too, skipped: {:?}",
+        set.ignored_jobs
+    );
+}
+
+#[test]
+fn a_target_reports_when_it_deployed_not_when_the_code_was_written() {
+    // The commit could be weeks old and shipped this morning. Deplyd is asked
+    // the second thing, so the job's own finish time is what it keeps.
+    let world = World::new("deployed-at", PLAIN_WORKFLOW);
+    let deployed = world.sandbox.head();
+
+    let stub = StubGitHub::new()
+        .runs(
+            "deploy-production.yml",
+            &[StubRun::success(140, "2026-03-01T09:00:00Z", &deployed)],
+        )
+        .jobs(
+            140,
+            &[StubJob::deploy(940, "deploy-api").finished_at("2026-03-01T09:11:22Z")],
+        );
+
+    let github = GitHub::new(Box::new(stub), "acme".into(), "widgets".into());
+    let context = world.context("production");
+    let runs = runs_for(&github, "deploy-production.yml", false);
+    let set = build_targets(&context, &world.repo, &github, &runs);
+
+    let target = set.targets.first().expect("one target");
+    assert_eq!(
+        target.deployed_at, "2026-03-01T09:11:22Z",
+        "the job's finish, not the run's start"
+    );
+}
+
+#[test]
+fn a_target_still_in_flight_falls_back_to_when_it_began() {
+    // No finish yet. Its start beats the run's creation, which may be minutes
+    // earlier and several jobs back.
+    let world = World::new("still-going", PLAIN_WORKFLOW);
+    let deployed = world.sandbox.head();
+
+    let stub = StubGitHub::new()
+        .runs(
+            "deploy-production.yml",
+            &[StubRun::success(150, "2026-03-01T09:00:00Z", &deployed)],
+        )
+        .jobs(150, &[StubJob::deploy(950, "deploy-api")]);
+
+    let github = GitHub::new(Box::new(stub), "acme".into(), "widgets".into());
+    let context = world.context("production");
+    let runs = runs_for(&github, "deploy-production.yml", false);
+    let set = build_targets(&context, &world.repo, &github, &runs);
+
+    let target = set.targets.first().expect("one target");
+    assert_eq!(
+        target.deployed_at, "2026-01-01T00:00:00Z",
+        "the stub job's started_at, not the run's created_at"
+    );
 }

@@ -78,7 +78,11 @@ pub fn records(
         // The name last but one: a subject can hold anything, so it stays the
         // final field and takes whatever tabs are left.
         "--format=%h%x09%ct%x09%cd%x09%an%x09%s",
-        "--date=format:%Y-%m-%d %H:%M",
+        // format-local, not format: a commit merged on github.com records UTC
+        // while one made here records its own offset, and rendering each in
+        // the zone it happens to carry puts the column out of order without
+        // any of the times being wrong.
+        "--date=format-local:%Y-%m-%d %H:%M",
     ]);
     args.extend_from_slice(revision_args);
     if !scope.is_empty() {
