@@ -37,6 +37,15 @@ const DEPLOY_ACTIONS: &[&str] = &[
     "peaceiris/actions-gh-pages",
     "actions/deploy-pages",
     "pulumi/actions",
+    // Publishing a release or a package is how a CLI, a library or an image
+    // ships. Nothing reaches a server, but a version reaches its users, which
+    // is the same question deplyd answers.
+    "softprops/action-gh-release",
+    "ncipollo/release-action",
+    "actions/create-release",
+    "goreleaser/goreleaser-action",
+    "pypa/gh-action-pypi-publish",
+    "jreleaser/release-action",
 ];
 
 /// Commands that ship something. The applying forms only: a plan is not a deploy.
@@ -58,6 +67,13 @@ const DEPLOY_COMMANDS: &[&str] = &[
     "gcloud app deploy",
     "eb deploy",
     "pulumi up",
+    "gh release create",
+    "cargo publish",
+    "twine upload",
+    "gem push",
+    "poetry publish",
+    "dotnet nuget push",
+    "mvn deploy",
 ];
 
 /// Input names that, when they carry a choice, are naming an environment.
@@ -119,6 +135,10 @@ pub struct JobFacts {
     /// What tells matrix legs apart.
     pub matrix_dimensions: Vec<String>,
     pub step_count: usize,
+    /// A step of this job ships something. Held per job, not per workflow: a
+    /// release workflow is mostly deciding, building and gating, and only the
+    /// job that actually ships is a thing you can ask about.
+    pub deploys: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,9 +171,16 @@ impl WorkflowFacts {
     }
 
     /// By key or display name. A called workflow arrives as "Deploy API / deploy-api".
+    ///
+    /// A matrix leg needs more work: the API reports it expanded, so `build`
+    /// with `name: ${{ matrix.target }}` comes back as `x86_64-apple-darwin`,
+    /// matching neither the key nor the name as written. Without this it would
+    /// find no facts, and a job with no facts looks exactly like a job with no
+    /// evidence that it ships.
     pub fn job(&self, name: &str) -> Option<&JobFacts> {
         let last = name.rsplit('/').next().unwrap_or(name).trim();
-        self.jobs
+        if let Some(found) = self
+            .jobs
             .iter()
             .find(|job| job.key == name || job.name == name)
             .or_else(|| {
@@ -161,6 +188,30 @@ impl WorkflowFacts {
                     .iter()
                     .find(|job| job.key == last || job.name == last)
             })
+        {
+            return Some(found);
+        }
+
+        // An unnamed matrix job arrives as "build (x86_64-apple-darwin)".
+        if let Some(head) = last.split(" (").next().map(str::trim)
+            && head != last
+            && let Some(found) = self
+                .jobs
+                .iter()
+                .find(|job| job.key == head || job.name == head)
+        {
+            return Some(found);
+        }
+
+        // A named one arrives as whatever the template resolved to, which
+        // matches nothing. Attributable only while exactly one job could have
+        // produced it; more than one and a guess would be worse than nothing.
+        let mut templated = self
+            .jobs
+            .iter()
+            .filter(|job| !job.matrix_dimensions.is_empty() && job.name.contains("${{"));
+        let only = templated.next()?;
+        templated.next().is_none().then_some(only)
     }
 }
 
@@ -192,7 +243,7 @@ pub fn facts_from_str(file_name: &str, text: &str) -> Result<WorkflowFacts, Yaml
 
     Ok(WorkflowFacts {
         trigger_paths: read_trigger_paths(&document),
-        deploys_by_action: uses_a_deploy_step(&document),
+        deploys_by_action: jobs.iter().any(|job| job.deploys),
         file: file_name.to_string(),
         name: name.clone(),
         token: token(&format!("{stem} {name}")),
@@ -252,36 +303,31 @@ fn read_jobs(document: &Node) -> Vec<JobFacts> {
                     .get("steps")
                     .map(|steps| steps.items().len())
                     .unwrap_or(0),
+                deploys: job_ships(job),
             }
         })
         .collect()
 }
 
-/// Whether any step ships something.
-fn uses_a_deploy_step(document: &Node) -> bool {
-    let Some(jobs) = document.get("jobs") else {
+/// Whether a step of this one job ships something.
+fn job_ships(job: &Node) -> bool {
+    let Some(steps) = job.get("steps") else {
         return false;
     };
-
-    for (_, job) in jobs.entries() {
-        let Some(steps) = job.get("steps") else {
-            continue;
-        };
-        for step in steps.items() {
-            if let Some(uses) = step.get_str(&["uses"]) {
-                let name = uses.split('@').next().unwrap_or(uses).to_lowercase();
-                if DEPLOY_ACTIONS.contains(&name.as_str()) {
-                    return true;
-                }
+    for step in steps.items() {
+        if let Some(uses) = step.get_str(&["uses"]) {
+            let name = uses.split('@').next().unwrap_or(uses).to_lowercase();
+            if DEPLOY_ACTIONS.contains(&name.as_str()) {
+                return true;
             }
-            if let Some(run) = step.get_str(&["run"]) {
-                let flattened = run.to_lowercase();
-                if DEPLOY_COMMANDS
-                    .iter()
-                    .any(|command| flattened.contains(command))
-                {
-                    return true;
-                }
+        }
+        if let Some(run) = step.get_str(&["run"]) {
+            let flattened = run.to_lowercase();
+            if DEPLOY_COMMANDS
+                .iter()
+                .any(|command| flattened.contains(command))
+            {
+                return true;
             }
         }
     }

@@ -62,6 +62,20 @@ impl Sandbox {
         self.head()
     }
 
+    /// A commit whose recorded time carries the offset given, so a fixture can
+    /// hold the mix a real repository has: merges made on github.com record UTC,
+    /// commits made at a desk record whatever that desk is on.
+    pub fn commit_at(&self, file: &str, contents: &str, message: &str, when: &str) -> String {
+        let target = self.path().join(file);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).expect("directory");
+        }
+        std::fs::write(&target, contents).expect("write");
+        self.git(&["add", "-A"]);
+        self.git_at(&["commit", "-qm", message], when);
+        self.head()
+    }
+
     /// A commit touching nothing, for history that only needs to exist.
     pub fn empty_commit(&self, message: &str) -> String {
         self.git(&["commit", "-qm", message, "--allow-empty"]);
@@ -106,6 +120,24 @@ impl Sandbox {
 
     fn git(&self, args: &[&str]) {
         self.run_git(args);
+    }
+
+    #[allow(clippy::disallowed_types)] // the sandbox is the tests' gateway
+    fn git_at(&self, args: &[&str], when: &str) {
+        let home = self.root.join("home");
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(self.path())
+            .env("GIT_ALLOW_PROTOCOL", "file")
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_AUTHOR_DATE", when)
+            .env("GIT_COMMITTER_DATE", when)
+            .output()
+            .expect("git should run");
     }
 
     #[allow(clippy::disallowed_types)] // the sandbox is the tests' gateway
@@ -312,6 +344,7 @@ pub struct StubJob {
     pub name: &'static str,
     pub conclusion: &'static str,
     pub started: bool,
+    pub completed: Option<&'static str>,
     pub steps: Vec<(&'static str, &'static str)>,
 }
 
@@ -324,6 +357,7 @@ impl StubJob {
             name,
             conclusion: "success",
             started: true,
+            completed: None,
             steps: vec![
                 ("Checkout", "success"),
                 ("Build", "success"),
@@ -334,6 +368,12 @@ impl StubJob {
 
     pub fn with_steps(mut self, steps: Vec<(&'static str, &'static str)>) -> Self {
         self.steps = steps;
+        self
+    }
+
+    /// When GitHub says the job finished, which is when the target went live.
+    pub fn finished_at(mut self, when: &'static str) -> Self {
+        self.completed = Some(when);
         self
     }
 
@@ -355,8 +395,12 @@ impl StubJob {
         } else {
             "null"
         };
+        let completed = match self.completed {
+            Some(when) => format!("\"{when}\""),
+            None => "null".to_string(),
+        };
         format!(
-            "{{\"id\":{},\"name\":\"{}\",\"conclusion\":\"{}\",\"started_at\":{started},\"steps\":[{}]}}",
+            "{{\"id\":{},\"name\":\"{}\",\"conclusion\":\"{}\",\"started_at\":{started},\"completed_at\":{completed},\"steps\":[{}]}}",
             self.id,
             self.name,
             self.conclusion,

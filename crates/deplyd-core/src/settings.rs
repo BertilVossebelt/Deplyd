@@ -79,6 +79,11 @@ pub struct Override {
     /// Substrings of a job name that keep it from being a target.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignore_jobs: Vec<String>,
+    /// Substrings of a job name that make it a target even with no evidence it
+    /// ships. The way back in when detection is too strict, and the reason it
+    /// can afford to be: a miss costs one line here.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub target_jobs: Vec<String>,
     /// Which paths a target covers, when its job sets no `working-directory`.
     /// Keyed by the label deplyd reports.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]

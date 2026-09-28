@@ -52,6 +52,7 @@ pub fn draft(context: &Context) -> Override {
         deploy_pattern: Some(context.deploy_pattern.clone()),
         environments,
         ignore_jobs: context.ignore_jobs.clone(),
+        target_jobs: context.target_jobs.clone(),
         scopes,
     }
 }

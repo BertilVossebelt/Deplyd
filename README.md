@@ -182,6 +182,7 @@ Per target:
 
 |             |                                                                               |
 |-------------|-------------------------------------------------------------------------------|
+| the date    | when that target finished deploying, not when the commit was written          |
 | `DEPLYD`    | built and released, with no newer deploy failing or in flight                 |
 | `UNCERTAIN` | a newer deploy did not complete, or the commit could not be read reliably     |
 | `because`   | what made it uncertain: the run that failed, or the reading that did not hold |
@@ -217,6 +218,7 @@ fixes.
     "staging": {}
   },
   "ignoreJobs": ["merge", "notify", "smoke"],
+  "targetJobs": ["ship-it"],
   "scopes": {
     "API": ["services/api"],
     "WEB": ["services/web"]
@@ -230,6 +232,7 @@ fixes.
 | `environments`                  | the wrong environment list. Your names replace the detected ones            |
 | `environments.<name>.workflows` | the wrong workflows for an environment. An explicit list always wins        |
 | `ignoreJobs`                    | a job showing up as a target that should not                                |
+| `targetJobs`                    | a job that should be a target and is not. One line beats six `ignoreJobs`   |
 | `scopes`                        | which paths a target covers. Keyed by the label reported                    |
 
 ### What detection looks for
@@ -238,7 +241,8 @@ fixes.
 |---------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | a deploy workflow   | the filename or `name:` contains `deploy`, `release`, `publish`, `ship` or `cd`; or a job declares an `environment:`; or a step uses a known deploy action or runs an applying command |
 | an environment      | the name appears in the filename, in a job's `environment:`, or in a `workflow_dispatch` choice input                                                                                  |
-| a target            | a job that is not plumbing, with at least three steps. Names containing `merge`, `notify`, `lint`, `test`, `setup` and similar are skipped                                             |
+| a target            | a job that ships: it declares an `environment:`, or a step of it runs a known deploy or publish action or command. Being inside a deploy workflow is not enough - a release workflow mostly decides, gates and builds |
+| that, more loosely  | if no job in the workflow ships by any route deplyd knows, the older rule applies instead: any job that is not plumbing, with at least three steps. Better a guess than no targets at all |
 | that target's scope | the job's `defaults.run.working-directory`; or a directory all its steps agree on; or the workflow's own `paths:` trigger filter                                                       |
 
 A job's name becomes its label, so `deploy-api` reports as `API`. Environments are
