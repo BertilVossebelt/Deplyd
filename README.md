@@ -3,20 +3,19 @@
 _Is my pull request deployed?_
 
 Deplyd answers that for any repo that deploys through GitHub Actions. It names the
-commit each environment was last deployed from, and tells you which of your changes are
+commit each environment was last deployed from and tells you which of your changes are
 in it.
 
-GitHub's deployments page shows one row per deploy run with one commit title. It never
-shows which commits went out, so answering this by hand means opening runs, reading
-logs and comparing SHAs. This does that for you.
+GitHub's deployments page shows one row per deploy run with one commit title. 
+It never shows which commits went out, so answering this by hand means opening runs,
+reading logs, and comparing SHAs. This does that for you.
 
-It was built for the case where you cannot change anything: no access to the servers,
-no authority over the deploy workflows, no pipeline step you are allowed to add.
-Everything it reports is recovered from what GitHub already exposes. It installs nothing
-into your repository and only ever reads it.
+Built for the case where you cannot change anything: no access to the servers, no
+authority over the deploy workflows, no pipeline step you are allowed to add. It
+installs nothing into your repository.
 
 ```
-$ deplyd pr 412
+$ deplyd status pr 412
 Inspecting production deploys...
 
 production  ·  2 targets
@@ -38,14 +37,7 @@ PR #412  feat(billing): add invoice export endpoint
   WEB       ✗ NOT DEPLYD   deployed 4d5e6f7
 ```
 
-Commit SHAs and run numbers are links where the terminal supports them.
-
 ## Install
-
-One command. It installs the GitHub CLI if you have not got it, checks the download
-against the published checksum and signature, installs deplyd and `dp`, puts them on
-your PATH, signs you in, and turns on tab completion. A download that does not check
-out is not installed, and checking it needs no account and no token.
 
 **macOS and Linux**
 
@@ -66,109 +58,64 @@ git clone https://github.com/BertilVossebelt/Deplyd.git
 cd deplyd && cargo install --path crates/deplyd
 ```
 
-Then open a new terminal, and from inside any repo:
+Then open a new terminal and run `dp status` from inside any repo.
 
-```bash
-dp status
-```
-
-## Updating
-
-Run the installer again. It replaces the binary where it already is, so there is no
-need to uninstall first:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh
-```
-
-```powershell
-irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1 | iex
-```
-
-`dp update` asks which release is newest, says whether this is it, and prints the
-line above for the machine you are on. Printing is all it does, for the same reason
-`dp uninstall` does: deplyd does not write outside its own config.
-
-## Uninstall
-
-The installer takes back what it put there, and nothing else.
-
-**macOS and Linux**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.sh | sh -s -- --uninstall
-```
-
-**Windows**, where `iex` cannot pass a switch, so the script becomes a block first
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1))) -Uninstall
-```
-
-That removes the two binaries, the PATH entry and the completion block. It asks
-before removing the GitHub CLI, which was probably here first, and leaves your
-sign-in and any `.deplyd.json` where they are. Remembered defaults and the cache stay
-too: add `--purge`, or `-Purge`, to take those as well.
-
-`dp uninstall` prints the right line for the machine you are on. Printing it is all
-it does - deplyd does not delete, which is the point of `dp check`.
-
-## Setup
-
-The installer does all of this. You only need it if you built from source, or said no
-to something.
-
-| | |
-|---------------|--------------------------------------------------------------------|
-| Sign in       | `gh auth login` |
-| Completion    | `deplyd completions powershell >> $PROFILE.CurrentUserAllHosts`, or bash, zsh, fish, elvish |
-| Short name    | `dp` is a link to `deplyd`, made next to it |
-
-Signing in is a device flow against access you already have. deplyd never asks you to
-create a personal access token: on an organisation repository that can need an owner's
-approval, and needing permission from someone is the thing this tool exists to avoid.
-In CI, `GITHUB_TOKEN` is used instead, so there is no login step there.
-
-Every release is signed and recorded in a public transparency log. Each one also
-publishes the signature as `attestation.json`, which checks without signing in:
-
-```bash
-gh attestation verify deplyd --repo BertilVossebelt/Deplyd --bundle attestation.json
-```
+`dp update` and `dp uninstall` tell you how to do those. If you built from source, sign
+in with `gh auth login` and add completion with `deplyd completions <shell>`.
 
 ## Usage
 
 Run it from inside any repo.
 
-| Command                 |                                                      |
-|-------------------------|------------------------------------------------------|
-| `deplyd status`         | the last deployed commit, and your changes in it     |
-| `deplyd pr 412`         | is that pull request live?                           |
-| `deplyd commit a1b2c3d` | is that commit live? takes any ref, including `HEAD` |
-| `deplyd environments`   | environments that `-E` accepts                       |
-| `deplyd authors`        | names that `-A` accepts                              |
-| `deplyd config`         | what detection concluded about this repo             |
-| `deplyd init`           | write that conclusion to a file you can correct      |
-| `deplyd remember`       | keep a default author, environment or repo           |
-| `deplyd completions`    | shell completion scripts                             |
-| `deplyd check`          | prove it can only read                               |
-| `deplyd update`         | whether a newer release is out, and how to get it    |
-| `deplyd uninstall`      | how to remove deplyd from this machine               |
+Four verbs take a second word. The first word says what you want, the second says
+what about.
 
-`dp` is the same binary under a shorter name. Commands shorten too, while they stay
-unambiguous, so `dp env` and `dp auth` work.
+```
+deplyd status                     the last deployed commit, and your changes in it
+       status pr 412              is that pull request live?
+       status commit a1b2c3d      is that commit live? any ref, HEAD included
 
-| Option                    |                                                |
-|---------------------------|------------------------------------------------|
-| `-E, --environment <env>` | environment, or a prefix: `-E prod`, `-E stag` |
-| `-A, --author <name>`     | author, default `git config user.name`         |
-| `--anyone`                | every author, not just yours                   |
-| `-T, --take <n>`          | how many to list per list, default 10          |
-| `-S, --skip <n>`          | skip this many, for paging                     |
-| `-D, --depth <n>`         | how far back to read per target, default 200   |
-| `--repo-path <path>`      | repo to inspect, default the current directory |
-| `-J, --json`              | machine-readable output, for `status` and `pr` |
-| `-F, --force`             | let `init` rewrite a file that already exists  |
+       watch                      deploys and changes going live, as they happen
+       watch pr 412               the same, until that pull request is live
+       watch commit a1b2c3d       the same, for any ref
+
+       list environments          environments that -E accepts
+       list authors               names that -A accepts
+
+       config                     what detection concluded about this repo
+       config init                write that out as a file you can correct
+```
+
+The rest stand alone.
+
+| Command              |                                            |
+|----------------------|--------------------------------------------|
+| `deplyd remember`    | keep a default author, environment or repo |
+| `deplyd completions` | shell completion scripts                   |
+| `deplyd check`       | prove it can only read                     |
+| `deplyd update`      | whether a newer release is out             |
+| `deplyd uninstall`   | how to remove it from this machine         |
+
+`dp` is the same binary under a shorter name. Both words shorten while they stay
+unambiguous, so `dp li env` and `dp st pr 412` work.
+
+Every verb offers only the options it acts on, so `deplyd <verb> --help` is the
+short list that applies to it.
+
+| Option                    | Taken by                                         |
+|---------------------------|--------------------------------------------------|
+| `-E, --environment <env>` | `status`, `watch`, `config`; a prefix will do    |
+| `-A, --author <name>`     | the same, default `git config user.name`         |
+| `--anyone`                | the same, every author rather than yours         |
+| `-D, --depth <n>`         | `status`, `watch`; how far back, default 200     |
+| `-T, --take <n>`          | `status`, `watch`; how many to list, default 10  |
+| `-S, --skip <n>`          | `status`, `watch`; skip this many, for paging    |
+| `-J, --json`              | `status`, `watch`; machine-readable output       |
+| `--repo-path <path>`      | anything that opens a repo, default the cwd      |
+| `-F, --force`             | `config init`, to rewrite a file that exists     |
+| `-h, --help`              | anything; on `status` and `watch` it also        |
+|                           | explains the words the report uses               |
+| `-V, --version`           | which deplyd this is                             |
 
 Defaults can be kept:
 
@@ -177,78 +124,90 @@ deplyd remember author "Ada"
 deplyd remember environment staging
 deplyd remember repo /path/to/repo
 deplyd remember depth 500
+deplyd remember every 5m
 ```
 
-Depth is how far back each target is read. The default of 200 keeps a long history
-from being walked on every run; when it stops early the count is shown as `355+` and
-the report says so, rather than presenting a ceiling as a total.
+When `--depth` stops a target early the count reads `355+`, so a ceiling is never shown
+as a total.
+
+## Watching
+
+`deplyd watch` looks again every so often and prints what changed: a deploy starting,
+succeeding or failing, and a change crossing from pending to live. `-E`, `-A` and
+`--anyone` narrow it as they do `status`.
+
+```bash
+deplyd watch --anyone -E production
+deplyd watch pr 412 --for 2h          # exits 0 the moment it is live
+deplyd watch commit HEAD              # the same, for any ref
+deplyd watch --every 5m --json        # one JSON object per line, per event
+```
+
+| Option               |                                           |
+|----------------------|-------------------------------------------|
+| `--every <duration>` | how often to look, default 60s, floor 10s |
+| `--for <duration>`   | stop after this long                      |
+
+Every look costs API requests, more of them the more deploy workflows a repo has, out
+of an hourly allowance shared with `gh`. So be careful not to run it too fast for
+too long. Especially if you have a lot of deploy workflows.
 
 ## In a script
 
-`--json` prints one document and nothing else. `pr` and `commit` exit on their verdict,
-so a release gate is one line:
+`status pr` and `status commit` exit on their verdict, so no parsing is needed:
 
 ```bash
-deplyd pr 412 -E production --json > verdict.json || echo "do not ship"
+deplyd status pr 412 -E production || echo "not deployed"
 ```
 
-| Exit |                                                            |
-|------|------------------------------------------------------------|
-| `0`  | deplyd, on evidence with nothing shaky about it            |
-| `2`  | not deplyd, including a change no target covers            |
-| `3`  | reverted                                                   |
-| `4`  | not merged                                                 |
-| `5`  | no such pull request, or no access to it                   |
-| `6`  | deplyd, but a target is `UNCERTAIN`: read the report first |
-| `1`  | deplyd could not run                                       |
+| Exit |                                                              |
+|------|--------------------------------------------------------------|
+| `0`  | deployed, on evidence with nothing shaky about it            |
+| `2`  | not deployed, including a change no target covers            |
+| `3`  | reverted                                                     |
+| `4`  | not merged                                                   |
+| `5`  | no such pull request, or no access to it                     |
+| `6`  | deployed, but a target is `UNCERTAIN`: read the report first |
+| `1`  | could not run                                                |
 
-`0` is the only code meaning "in what shipped, and the reading is sound". `6` exists so
-a gate is never told *shipped* on evidence deplyd has itself questioned: the change is
-in the deployed commit, but a newer deploy did not complete, or the commit could not be
-read reliably. Treat `6` as "look before shipping", or accept only `0` to be strict.
+`6` means the change is in the deployed commit, but a newer deploy did not complete or
+the commit could not be read reliably. Accept only `0` to be strict.
 
-`deplyd status --json` lists every target and change, and exits `0` whenever it could
-answer at all.
+`--json` prints one document and nothing else. `deplyd status --json` lists every target
+and change, and exits `0` whenever it could answer at all.
 
 ## What it reports
 
 Per target:
 
-|             |                                                                           |
-|-------------|---------------------------------------------------------------------------|
-| `DEPLYD`    | built and released, with no newer deploy failing or in flight             |
-| `UNCERTAIN` | a newer deploy did not complete, or the commit could not be read reliably |
+|             |                                                                               |
+|-------------|-------------------------------------------------------------------------------|
+| `DEPLYD`    | built and released, with no newer deploy failing or in flight                 |
+| `UNCERTAIN` | a newer deploy did not complete, or the commit could not be read reliably     |
 | `because`   | what made it uncertain: the run that failed, or the reading that did not hold |
-| `skipped`   | steps the run skipped. Changes to those are not live                     |
+| `skipped`   | steps the run skipped. Changes to those are not live                          |
 
 Per change:
 
-|                                |                                                       |
-|--------------------------------|-------------------------------------------------------|
-| `DEPLYD in <sha>`              | it is in the deployed commit                          |
+|                                |                                                                            |
+|--------------------------------|----------------------------------------------------------------------------|
+| `DEPLYD in <sha>`              | it is in the deployed commit                                               |
 | `DEPLYD in <sha> as a copy`    | the commit is absent but the same change is there, cherry-picked or rebased |
-| `REVERTED undone before <sha>` | it shipped, then was undone before the deployed commit |
-| `NOT DEPLYD deployed <sha>`    | neither the commit nor an equivalent change is there  |
-| `NOT MERGED`                   | still open, or closed without merging                 |
-| `NOT COVERED`                  | it changed no path any target covers. Lists every target and what it covers, since a wrong scope looks identical to an unrelated change |
+| `REVERTED undone before <sha>` | it shipped, then was undone before the deployed commit                     |
+| `NOT DEPLYD deployed <sha>`    | neither the commit nor an equivalent change is there                       |
+| `NOT MERGED`                   | still open, or closed without merging                                      |
+| `NOT COVERED`                  | it changed no path any target covers                                       |
 
 `DEPLYD` means the code was built and the deploy ran to completion. Nothing outside the
 server can prove the process actually cycled, which is why it is not `VERIFIED`.
 
-There are two records of what a run deployed: the commit `checkout` resolved in the log,
-and the commit GitHub's deployment record was created for. Where both are in hand they
-are compared, and a disagreement is reported rather than resolved. That usually means the
-branch moved mid-deploy. The deployment record also outlives the log, which GitHub
-deletes after the retention period.
-
 ## Adapting it to your repo
 
-GitHub Actions is flexible enough that detection will not always land. Run
-`deplyd config` to see what it concluded, and `deplyd init` to write that conclusion to
-a file you can correct by hand rather than author from nothing. Every key is optional.
-
-The file stays out of your working tree. To share the fixes, move it to the repo root as
-`.deplyd.json` and commit it: deplyd reads that in preference when it is there.
+GitHub Actions is flexible enough that detection will not always land. `deplyd config`
+shows what it concluded; `deplyd config init` writes that out as a file you can
+correct. Every
+key is optional. Move it to the repo root as `.deplyd.json` and commit it to share the
+fixes.
 
 ```json
 {
@@ -265,143 +224,80 @@ The file stays out of your working tree. To share the fixes, move it to the repo
 }
 ```
 
-| Key                             | Fixes                                               |
-|---------------------------------|-----------------------------------------------------|
+| Key                             | Fixes                                                                       |
+|---------------------------------|-----------------------------------------------------------------------------|
 | `deployPattern`                 | a deploy workflow not being found, or a non-deploy one being treated as one |
-| `environments`                  | the wrong environment list. Your names replace the detected ones |
-| `environments.<name>.workflows` | the wrong workflows for an environment. An explicit list always wins |
-| `ignoreJobs`                    | a job showing up as a target that should not        |
-| `scopes`                        | which paths a target covers. Keyed by the label deplyd reports |
-
-A file that will not parse stops the run and gets named. Carrying on without it would
-silently drop the corrections it exists to hold.
+| `environments`                  | the wrong environment list. Your names replace the detected ones            |
+| `environments.<name>.workflows` | the wrong workflows for an environment. An explicit list always wins        |
+| `ignoreJobs`                    | a job showing up as a target that should not                                |
+| `scopes`                        | which paths a target covers. Keyed by the label reported                    |
 
 ### What detection looks for
 
-Useful for reading `deplyd config`, and for telling which key to set. None of it is a
-requirement.
+| It is treated as    | When                                                                                                                                                                                   |
+|---------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| a deploy workflow   | the filename or `name:` contains `deploy`, `release`, `publish`, `ship` or `cd`; or a job declares an `environment:`; or a step uses a known deploy action or runs an applying command |
+| an environment      | the name appears in the filename, in a job's `environment:`, or in a `workflow_dispatch` choice input                                                                                  |
+| a target            | a job that is not plumbing, with at least three steps. Names containing `merge`, `notify`, `lint`, `test`, `setup` and similar are skipped                                             |
+| that target's scope | the job's `defaults.run.working-directory`; or a directory all its steps agree on; or the workflow's own `paths:` trigger filter                                                       |
 
-| It is treated as   | When                                                           |
-|--------------------|----------------------------------------------------------------|
-| a deploy workflow  | the filename or `name:` contains `deploy`, `release`, `publish`, `ship` or `cd`; or a job declares an `environment:`; or a step uses a known deploy action or runs an applying command |
-| an environment     | the name appears in the filename, in a job's `environment:`, or in a `workflow_dispatch` choice input |
-| a target           | a job that is not plumbing, with at least three steps. Names containing `merge`, `notify`, `lint`, `test`, `setup` and similar are skipped |
-| that target's scope | the job's `defaults.run.working-directory`; or a directory all its steps agree on; or the workflow's own `paths:` trigger filter |
-
-Those words match whole words only, so a job called `deploy-latest` is not read as a
-test job.
-
-A job's name becomes its label, so `deploy-api` reports as `API`.
-
-Environments are optional: a repo with one `deploy.yml` and none at all works. Where one
-workflow deploys to staging and then production, the jobs are told apart by their
-`environment:` declarations; without those, a run cannot be attributed to one.
+A job's name becomes its label, so `deploy-api` reports as `API`. Environments are
+optional: a repo with one `deploy.yml` and none at all works.
 
 ## Read-only
 
-deplyd cannot write to your repository and does not ask you to take that on trust.
+Deplyd never writes to GitHub and never changes your code. It makes two writes: `git
+fetch`, which updates your own remote-tracking refs and sends nothing, and its own
+settings file, in your config directory or at `.deplyd.json` in the repo if you put one
+there.
 
-The dangerous operations do not exist rather than being refused: every git call names a
-verb from a fixed set with no `push`, no `reset` and no `checkout`, and every GitHub
-request is one of six routes with no method to set. Arguments that would write are
-refused before anything runs. And because a compiled binary cannot audit the source it
-came from, every invocation exercises its own refusal paths first. A build whose guard
-has been weakened refuses to read a repository at all.
+The dangerous operations do not exist rather than being refused: every git call names
+a verb from a fixed set with no `push` and no `checkout`, and every GitHub request is
+one of a few GET routes with no method to set. Because a compiled binary cannot audit
+the source it came from, every run exercises its own refusal paths first, and a build
+whose guard has been weakened refuses to read a repository at all.
 
 ```
 $ deplyd check
 
-deplyd read-only self-check
-
-  git verbs           PASS  13 allowed, none of them write: rev-parse, rev-list, log, show, merge-base, shortlog, cat-file, diff, status, cherry, ls-files, config, fetch
+  git verbs           PASS  13 allowed, none of them write
   write refusals      PASS  8 of 8 refused
   reads still work    PASS  5 of 5 allowed
-  github routes       PASS  6 routes, all GET, all inside the repo
-
-  writes on disk      only inside ~/.config/deplyd
-                      remembered defaults, and what deplyd init scaffolds
-  the one git write   fetch, which updates your own remote-tracking refs
-                      nothing is sent, and a fetch cannot change a remote
-
-  These ran just now, against the code compiled into this binary,
-  not against source sitting beside it.
+  github routes       PASS  7 routes, all GET, all inside the repo
 ```
 
-The one write against your repository is `git fetch`, which updates your own
-remote-tracking refs. Nothing is sent to GitHub. Everything else deplyd writes goes in
-its own directory, which `deplyd check` prints: remembered defaults, what `init`
-scaffolds, and a cache of runs that have already finished.
-
-This stops accidents, not someone determined to get around them. It also says nothing
-about dependencies, which run with the same permissions deplyd does.
+This stops accidents, not someone determined to get around them.
 
 ## Limitations
 
 - Deploys outside GitHub Actions are invisible. There is no run to read.
 - Workflows that deploy a branch input or call another workflow need the run log, and
-  GitHub deletes logs after the retention period. Past that, deplyd falls back to the
-  deployment record and marks the target `UNCERTAIN`.
-- One workflow serving several environments needs its jobs to declare `environment:`,
-  because the API does not expose `workflow_dispatch` inputs.
+  GitHub deletes logs after the retention period. Past that the target is `UNCERTAIN`.
+- One workflow serving several environments needs its jobs to declare `environment:`.
 - Only the newest fifteen runs per workflow are looked at, and the walk stops after
   three in a row reveal no new target. The output says when that happens.
-- Each leg of a matrix job becomes its own target, labelled by its matrix values.
-- A checkout inside a composite action is assumed to take the run's own ref.
-- Workflow YAML is read by a parser written for the subset workflows use. Anything else
-  is refused by name and line number rather than guessed at, and `deplyd config` names
-  any workflow it could not read.
 - `DEPLYD` means the commit shipped. A later commit rewriting the same lines is listed
   underneath rather than judged.
-- On Windows PowerShell 5.1, completion after a single `-` does not fire: that shell
-  never calls a native completer for one. `--` completes normally.
 
 ## Development
 
-### Running:
-
-To try a change the way someone else would meet it, dot-source the dev installer. It
-builds the tree and puts that build on PATH for the current terminal, with completion,
-writing nothing to your profile or rc file. Close the terminal and nothing of it is
-left.
-
-**macOS and Linux**
+Dot-source the dev installer to put a build of the current tree on PATH for that
+terminal only. Nothing is written to your profile or rc file.
 
 ```bash
-. ./dev-install.sh
+. ./dev-install.sh        # . .\dev-install.ps1 on Windows
 ```
 
-**Windows**
+The dot matters: a script cannot change the PATH of the shell that ran it. Each takes
+`--release`, `--persist` and `--revert`, spelled `-Release`, `-Persist` and `-Revert` in
+PowerShell. `--persist` installs for real, which is what testing the uninstaller needs.
 
-```powershell
-. .\dev-install.ps1
-```
-
-The dot matters: a script cannot change the PATH of the shell that ran it.
-
-Each takes its own spelling of the same three options, one dash in PowerShell and two
-in sh:
-
-|                                               | sh          | PowerShell |
-|-----------------------------------------------|-------------|------------|
-| Build with the release profile                | `--release` | `-Release` |
-| Install it for real, to work on the installer | `--persist` | `-Persist` |
-| Undo a `--persist`                            | `--revert`  | `-Revert`  |
-
-A persistent one is what `install.sh --uninstall` and `install.ps1 -Uninstall` need
-something to remove. Neither dev installer is the installer: that one only ever takes
-a published release, and refuses anything it cannot verify.
-
-### Testing:
-
-Run the tests with:
 ```bash
 cargo test
 ```
 
 No GitHub account or network needed: fixture repositories are built with
 `GIT_ALLOW_PROTOCOL=file`, so git itself refuses ssh and https.
-
-### Releasing:
 
 Cutting a release is in [RELEASING.md](RELEASING.md).
 
@@ -413,5 +309,4 @@ Provided as-is, with no warranty and no obligation on me to maintain or support 
 
 It is built to read only, and proves that about itself on every run. That is a guard,
 not a guarantee. Deciding whether it is safe to point at your repositories is your call,
-and whatever happens as a result is your responsibility. Read the source, run the tests,
-fork it and change it, or do not use it.
+and whatever happens as a result is your responsibility.

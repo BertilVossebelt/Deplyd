@@ -1,12 +1,43 @@
 //! Terminal shape: how wide it is, and whether it can take a link.
 
-use anstyle::{AnsiColor, Color, Style};
+use anstyle::{Color, RgbColor, Style};
 
-pub const CYAN: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan)));
-pub const GREEN: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)));
-pub const YELLOW: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
-pub const RED: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red)));
-pub const DIM: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightBlack)));
+/// The palette. One tonal family, muted rather than washed: a verdict should
+/// read as a verdict, not as an alarm.
+///
+/// Tuned for a dark terminal, which is what almost everyone has. It cannot be
+/// tuned for both: teal, sage and amber are high-luminance hues, so against
+/// white they sit near 2:1 whatever their chroma, and the only lever that would
+/// fix that is the lightness a dark background needs. Against #1e1e1e these run
+/// 4.7 to 8.7.
+///
+/// 24-bit rather than the 256-colour cube, which has six levels per channel and
+/// so could only offer these hues or a full step paler - too pale to keep the
+/// character. Not the basic sixteen either: every terminal theme remaps those,
+/// so "red" was whatever red the theme felt like rather than a colour anyone
+/// chose. anstream degrades this for a legacy Windows console and drops it
+/// entirely for a pipe or NO_COLOR.
+///
+/// Named for the job, not the hue. The hue is the part that changes.
+const fn ink(r: u8, g: u8, b: u8) -> Style {
+    Style::new().fg_color(Some(Color::Rgb(RgbColor(r, g, b))))
+}
+
+/// Headings, and the environment a report is about. Dusty teal.
+pub const ACCENT: Style = ink(0x5c, 0xcc, 0xcc);
+/// Deployd, and anything else that went the way it should. Sage.
+pub const OK: Style = ink(0x59, 0xc5, 0x59);
+/// Uncertain, not merged, not covered: true but needs reading. Tan.
+pub const WARN: Style = ink(0xf3, 0xab, 0x3f);
+/// Not deployd, reverted, and the line a run stops on. Soft red.
+///
+/// Lighter than this and it reads as pink however much chroma it carries, so
+/// this one is the only colour that had to come down as well as along. Held at
+/// this lightness rather than lower because it is the one colour here that a
+/// dark background does not flatter: 4.7 against #1e1e1e, just past AA.
+pub const BAD: Style = ink(0xea, 0x53, 0x53);
+/// Detail beside the thing it belongs to. Neutral grey, not the theme's.
+pub const DIM: Style = ink(0x9a, 0x9a, 0x9a);
 pub const BOLD: Style = Style::new().bold();
 
 /// The column values line up in, so a verdict and the fields under it share an edge.

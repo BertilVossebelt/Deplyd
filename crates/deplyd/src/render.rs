@@ -11,7 +11,7 @@ use deplyd_core::verdict::{
     Change, PullRequestReport, PullRequestTargetReport, Status, TargetStatus,
 };
 
-use crate::term::{self, BOLD, CYAN, DIM, GREEN, RED, WebBase, YELLOW};
+use crate::term::{self, ACCENT, BAD, BOLD, DIM, OK, WARN, WebBase};
 
 /// "2026-09-24 10:58".
 const DATE_WIDTH: usize = 16;
@@ -32,8 +32,15 @@ impl Output {
 
 /// Always exit 1: deplyd could not run, which is never a verdict.
 pub fn stop(message: &str, hints: &[String]) -> ! {
+    refuse(message, hints);
+    std::process::exit(1);
+}
+
+/// The same, but it returns, so a caller that owes the shell a different exit
+/// code can choose one.
+pub fn refuse(message: &str, hints: &[String]) {
     eprintln!();
-    eprintln!("{RED}{message}{RED:#}");
+    eprintln!("{BAD}{message}{BAD:#}");
     if !hints.is_empty() {
         eprintln!();
     }
@@ -42,7 +49,6 @@ pub fn stop(message: &str, hints: &[String]) -> ! {
     }
     eprintln!();
     let _ = std::io::stderr().flush();
-    std::process::exit(1);
 }
 
 /// What each target is running, and whether that can be trusted.
@@ -117,17 +123,17 @@ pub fn target_summary(
             field_styled(
                 label,
                 &format!("run {} {}", concern.run_id, concern.state),
-                YELLOW,
+                WARN,
             );
         }
         if !target.sha_warning.is_empty() {
-            field_styled("because", &target.sha_warning, YELLOW);
+            field_styled("because", &target.sha_warning, WARN);
         }
         if target.sha_source == ShaSource::DeploymentRecord {
             field_styled(
                 "because",
                 "the run log was unavailable, so this is what the deployment names",
-                YELLOW,
+                WARN,
             );
         }
 
@@ -139,7 +145,7 @@ pub fn target_summary(
         // One per line: a workflow can skip a dozen, and a run-on line hides which.
         for (index, step) in target.skipped.iter().enumerate() {
             let label = if index == 0 { "skipped" } else { "" };
-            field_styled(label, &step_text(step), YELLOW);
+            field_styled(label, &step_text(step), WARN);
         }
 
         if let Some(page) = pending {
@@ -172,9 +178,9 @@ fn verdict_line(
     mark: &term::Glyphs,
 ) {
     let (glyph, word, style) = if !target.concerns.is_empty() || !target.sha_is_exact {
-        (mark.warn, "UNCERTAIN", YELLOW)
+        (mark.warn, "UNCERTAIN", WARN)
     } else {
-        (mark.ok, "DEPLYD", GREEN)
+        (mark.ok, "DEPLYD", OK)
     };
 
     let (short, when, subject) = commit_parts(repo, &target.sha);
@@ -225,7 +231,7 @@ fn pending_for_target(
         field_styled(
             "pending",
             "cannot tell, no default branch to compare against",
-            YELLOW,
+            WARN,
         );
         return;
     };
@@ -274,7 +280,7 @@ fn pending_for_target(
                 "",
                 term::fit(&entry.title, used)
             ),
-            YELLOW,
+            WARN,
         );
     }
 
@@ -318,12 +324,12 @@ pub fn status(
     );
 
     if report.live.is_empty() {
-        println!("{CYAN}{heading}{CYAN:#}  {DIM}none{DIM:#}");
+        println!("{ACCENT}{heading}{ACCENT:#}  {DIM}none{DIM:#}");
         return;
     }
     if report.page.is_empty() {
         println!(
-            "{CYAN}{heading}{CYAN:#}  {DIM}{total} in total, nothing left after skipping {}{DIM:#}",
+            "{ACCENT}{heading}{ACCENT:#}  {DIM}{total} in total, nothing left after skipping {}{DIM:#}",
             report.skip
         );
         return;
@@ -331,7 +337,7 @@ pub fn status(
 
     let first = report.skip + 1;
     let last = report.skip + report.page.len();
-    println!("{CYAN}{heading}{CYAN:#}  {DIM}{first}-{last} of {total}{DIM:#}");
+    println!("{ACCENT}{heading}{ACCENT:#}  {DIM}{first}-{last} of {total}{DIM:#}");
     println!();
 
     let label_width = targets.label_width();
@@ -368,7 +374,7 @@ pub fn status(
 
         if reverted {
             println!(
-                "  {label}{DIM}{:<DATE_WIDTH$}{DIM:#}  {linked}{:<pad$}  {DIM}{who}{DIM:#}{RED}{title}{suffix}{RED:#}",
+                "  {label}{DIM}{:<DATE_WIDTH$}{DIM:#}  {linked}{:<pad$}  {DIM}{who}{DIM:#}{BAD}{title}{suffix}{BAD:#}",
                 entry.date, ""
             );
         } else {
@@ -410,11 +416,11 @@ pub fn change(targets: &TargetSet, report: &PullRequestReport, web: &WebBase) {
     if report.status == Status::NotFound {
         match &report.change {
             Change::Commit { sha } => {
-                println!("{YELLOW}commit {sha} : not found.{YELLOW:#}");
+                println!("{WARN}commit {sha} : not found.{WARN:#}");
                 println!("{DIM}No such commit in this clone.{DIM:#}");
             }
             Change::PullRequest { number } => {
-                println!("{YELLOW}PR #{number} : not found.{YELLOW:#}");
+                println!("{WARN}PR #{number} : not found.{WARN:#}");
                 println!("{DIM}No such pull request, or no access to it.{DIM:#}");
             }
         }
@@ -434,7 +440,7 @@ pub fn change(targets: &TargetSet, report: &PullRequestReport, web: &WebBase) {
 
     let heading = term::link(&label, &url);
     println!(
-        "{CYAN}{heading}  {}{CYAN:#}",
+        "{ACCENT}{heading}  {}{ACCENT:#}",
         term::fit(&report.title, label.len() + 2)
     );
 
@@ -463,7 +469,7 @@ pub fn change(targets: &TargetSet, report: &PullRequestReport, web: &WebBase) {
 
     if report.status == Status::CommitMissingLocally {
         println!();
-        println!("{YELLOW}  The merge commit {short} is not in your local clone.{YELLOW:#}");
+        println!("{WARN}  The merge commit {short} is not in your local clone.{WARN:#}");
         println!("{DIM}  Fetch, then run this again.{DIM:#}");
         println!();
         return;
@@ -485,14 +491,14 @@ fn unmerged(report: &PullRequestReport) {
     println!();
     match report.state.as_str() {
         "OPEN" => {
-            println!("{YELLOW}  NOT MERGED - still open, so it cannot be deployed{YELLOW:#}");
+            println!("{WARN}  NOT MERGED - still open, so it cannot be deployed{WARN:#}");
             if !report.branch.is_empty() {
                 println!("{DIM}  branch {}{DIM:#}", report.branch);
             }
         }
-        "CLOSED" => println!("{YELLOW}  NOT MERGED - closed without merging{YELLOW:#}"),
+        "CLOSED" => println!("{WARN}  NOT MERGED - closed without merging{WARN:#}"),
         other => {
-            println!("{YELLOW}  NOT MERGED - state is {other}, with no merge commit{YELLOW:#}")
+            println!("{WARN}  NOT MERGED - state is {other}, with no merge commit{WARN:#}")
         }
     }
     println!();
@@ -502,7 +508,7 @@ fn unmerged(report: &PullRequestReport) {
 /// Those look identical from one line, so show the comparison that was made.
 fn not_covered(targets: &TargetSet, report: &PullRequestReport) {
     println!();
-    println!("{YELLOW}  NOT COVERED - it changed nothing inside any deployed target{YELLOW:#}");
+    println!("{WARN}  NOT COVERED - it changed nothing inside any deployed target{WARN:#}");
     println!();
     println!("{DIM}  Targets considered:{DIM:#}");
 
@@ -533,15 +539,15 @@ fn not_covered(targets: &TargetSet, report: &PullRequestReport) {
     println!();
     if unscoped > 0 {
         println!(
-            "{YELLOW}  A target above covers everything and still matched nothing, so this is{YELLOW:#}"
+            "{WARN}  A target above covers everything and still matched nothing, so this is{WARN:#}"
         );
-        println!("{YELLOW}  a bug in deplyd rather than a scope to fix.{YELLOW:#}");
+        println!("{WARN}  a bug in deplyd rather than a scope to fix.{WARN:#}");
     } else {
         println!(
             "{DIM}  If a path above should belong to a target, its scope is wrong. Set it:{DIM:#}"
         );
         println!();
-        println!("    deplyd init");
+        println!("    deplyd config init");
         println!(
             "{DIM}    then edit scopes so the right target lists the path, for example:{DIM:#}"
         );
@@ -578,14 +584,14 @@ fn pull_request_target(entry: &PullRequestTargetReport, width: usize, web: &WebB
     match entry.status {
         TargetStatus::NotDeplyd => {
             println!(
-                "  {BOLD}{:<width$}{BOLD:#}  {RED}{} {:<verdict$}{RED:#} {DIM}deployed {linked}{DIM:#}",
+                "  {BOLD}{:<width$}{BOLD:#}  {BAD}{} {:<verdict$}{BAD:#} {DIM}deployed {linked}{DIM:#}",
                 entry.label, mark.bad, "NOT DEPLYD"
             );
         }
         TargetStatus::DeplydAsCopy => {
             let Some(copy) = &entry.copy else { return };
             println!(
-                "  {BOLD}{:<width$}{BOLD:#}  {GREEN}{} {:<verdict$}{GREEN:#} in {linked} {DIM}as a copy{DIM:#}",
+                "  {BOLD}{:<width$}{BOLD:#}  {OK}{} {:<verdict$}{OK:#} in {linked} {DIM}as a copy{DIM:#}",
                 entry.label, mark.ok, "DEPLYD"
             );
             let detail = if copy.commit.is_empty() {
@@ -604,13 +610,13 @@ fn pull_request_target(entry: &PullRequestTargetReport, width: usize, web: &WebB
         }
         TargetStatus::Reverted => {
             println!(
-                "  {BOLD}{:<width$}{BOLD:#}  {RED}{} {:<verdict$}{RED:#} {DIM}undone before {linked}{DIM:#}",
+                "  {BOLD}{:<width$}{BOLD:#}  {BAD}{} {:<verdict$}{BAD:#} {DIM}undone before {linked}{DIM:#}",
                 entry.label, mark.bad, "REVERTED"
             );
             for revert in &entry.reverts {
                 let used = 2 + width + 2 + verdict + 6 + revert.commit.len() + 2;
                 println!(
-                    "  {:<width$}  {:<gap$} {RED}by {}  {}{RED:#}",
+                    "  {:<width$}  {:<gap$} {BAD}by {}  {}{BAD:#}",
                     "",
                     "",
                     revert.commit,
@@ -624,12 +630,12 @@ fn pull_request_target(entry: &PullRequestTargetReport, width: usize, web: &WebB
             // takes the colour reserved for a bad answer.
             if entry.uncertain {
                 println!(
-                    "  {BOLD}{:<width$}{BOLD:#}  {GREEN}{} {:<verdict$}{GREEN:#} in {linked}{YELLOW}  {} see UNCERTAIN above{YELLOW:#}",
+                    "  {BOLD}{:<width$}{BOLD:#}  {OK}{} {:<verdict$}{OK:#} in {linked}{WARN}  {} see UNCERTAIN above{WARN:#}",
                     entry.label, mark.ok, "DEPLYD", mark.warn
                 );
             } else {
                 println!(
-                    "  {BOLD}{:<width$}{BOLD:#}  {GREEN}{} {:<verdict$}{GREEN:#} in {linked}",
+                    "  {BOLD}{:<width$}{BOLD:#}  {OK}{} {:<verdict$}{OK:#} in {linked}",
                     entry.label, mark.ok, "DEPLYD"
                 );
             }
@@ -653,7 +659,7 @@ fn pull_request_target(entry: &PullRequestTargetReport, width: usize, web: &WebB
 pub fn environments(context: &Context) {
     println!();
     if context.environments.is_empty() {
-        println!("{CYAN}No named environments.{CYAN:#}");
+        println!("{ACCENT}No named environments.{ACCENT:#}");
         println!("{DIM}This repo deploys without naming environments, which is fine.{DIM:#}");
         println!(
             "{DIM}Run deplyd with no -E. Name them in .deplyd.json if you want them split.{DIM:#}"
@@ -662,7 +668,7 @@ pub fn environments(context: &Context) {
         return;
     }
 
-    println!("{CYAN}Environments{CYAN:#}");
+    println!("{ACCENT}Environments{ACCENT:#}");
     let width = context
         .environments
         .iter()
@@ -700,7 +706,7 @@ pub fn config(context: &Context) {
         context.author.as_deref().unwrap_or("everyone")
     );
     println!();
-    println!("{CYAN}Deploy workflows ({}){CYAN:#}", workflows.len());
+    println!("{ACCENT}Deploy workflows ({}){ACCENT:#}", workflows.len());
 
     let mut groups: Vec<(String, Vec<&str>)> = Vec::new();
     for fact in &workflows {
@@ -756,7 +762,7 @@ pub fn config(context: &Context) {
         );
     } else {
         println!(
-            "{DIM}No overrides   deplyd init writes what is above to a file you can correct{DIM:#}"
+            "{DIM}No overrides   deplyd config init writes the above to a file you can correct{DIM:#}"
         );
     }
 
@@ -765,11 +771,11 @@ pub fn config(context: &Context) {
     if !context.unreadable.is_empty() {
         println!();
         println!(
-            "{YELLOW}Unreadable     {} workflow(s) could not be parsed and were left out:{YELLOW:#}",
+            "{WARN}Unreadable     {} workflow(s) could not be parsed and were left out:{WARN:#}",
             context.unreadable.len()
         );
         for (file, error) in &context.unreadable {
-            println!("{YELLOW}               {file}: {error}{YELLOW:#}");
+            println!("{WARN}               {file}: {error}{WARN:#}");
         }
         println!(
             "{DIM}               Set scopes and environments in .deplyd.json to cover them.{DIM:#}"
@@ -782,14 +788,14 @@ pub fn authors(repo: &deplyd_core::repo::Repo) {
     // Local HEAD is whatever this clone has checked out, usually behind.
     let Some(branch) = repo.default_branch() else {
         println!();
-        println!("{YELLOW}Cannot list authors: no default branch ref to count over.{YELLOW:#}");
+        println!("{WARN}Cannot list authors: no default branch ref to count over.{WARN:#}");
         println!("{DIM}origin/HEAD, origin/main and origin/master all failed to resolve.{DIM:#}");
         println!();
         return;
     };
 
     println!();
-    println!("{CYAN}Authors (commit count, name) on {branch}{CYAN:#}");
+    println!("{ACCENT}Authors (commit count, name) on {branch}{ACCENT:#}");
     for (count, name) in repo.authors(&branch) {
         println!("  {count:>6}  {name}");
     }
@@ -799,6 +805,120 @@ pub fn authors(repo: &deplyd_core::repo::Repo) {
     );
     println!("{DIM}One person can appear under several names; git counts them separately.{DIM:#}");
     println!();
+}
+
+// --- watching ---------------------------------------------------------------
+
+/// The line a watcher opens with, so it is obvious what it is waiting for and
+/// that nothing being printed means nothing is happening.
+pub fn watch_opening(
+    context: &Context,
+    until: Option<&crate::Asked>,
+    every: std::time::Duration,
+    has_deadline: bool,
+) {
+    let mark = term::glyphs();
+    let whose = context.author.as_deref().unwrap_or("everyone");
+    let waiting = match until {
+        None => "until you stop it".to_string(),
+        Some(crate::Asked::PullRequest(number)) => format!("until PR #{number} is live"),
+        Some(crate::Asked::Commit(reference)) => format!("until {reference} is live"),
+    };
+    let deadline = if has_deadline {
+        ", or --for runs out"
+    } else {
+        ""
+    };
+
+    println!();
+    println!(
+        "{ACCENT}watching  {}  {whose}{ACCENT:#}  {DIM}every {}, {waiting}{deadline}{DIM:#}",
+        mark.dot,
+        spoken(every)
+    );
+    println!();
+}
+
+/// One event. Human output is a line you can watch scroll past; --json is one
+/// object per line, so something else can read it as it arrives.
+pub fn watch_event(event: &deplyd_core::watch::Event, json: bool, web: &WebBase) {
+    if json {
+        if let Ok(line) = serde_json::to_string(event) {
+            println!("{line}");
+            // A watcher's reader is waiting on this line, not on the process
+            // ending, so it cannot sit in a buffer until then.
+            let _ = std::io::stdout().flush();
+        }
+        return;
+    }
+
+    let mark = term::glyphs();
+    let (glyph, colour) = match event.kind {
+        deplyd_core::watch::Kind::DeployStarted => (mark.dot, DIM),
+        deplyd_core::watch::Kind::DeploySucceeded => (mark.ok, OK),
+        deplyd_core::watch::Kind::DeployFailed => (mark.bad, BAD),
+        deplyd_core::watch::Kind::ChangeLive => (mark.ok, OK),
+    };
+
+    let linked = if event.url.is_empty() {
+        event.id.clone()
+    } else {
+        term::link(&event.id, &event.url)
+    };
+    let who = if event.author.is_empty() {
+        String::new()
+    } else {
+        format!("  {DIM}{}{DIM:#}", event.author)
+    };
+    let _ = web;
+
+    println!(
+        "  {DIM}{}{DIM:#}  {colour}{glyph} {:<8}{colour:#}  {BOLD}{}{BOLD:#}  {linked}  {}{who}",
+        now_hms(),
+        event.kind.as_str().split('.').next_back().unwrap_or(""),
+        event.label,
+        event.title
+    );
+    let _ = std::io::stdout().flush();
+}
+
+/// GitHub asked for a pause. Said out loud, because a watcher that went quiet
+/// for twenty minutes would otherwise look broken.
+pub fn watch_paused(wait: std::time::Duration) {
+    println!(
+        "  {DIM}{}  GitHub asked deplyd to wait {}s before looking again{DIM:#}",
+        now_hms(),
+        wait.as_secs()
+    );
+    let _ = std::io::stdout().flush();
+}
+
+pub fn watch_closing(reason: &str) {
+    println!();
+    println!("{DIM}Stopped: {reason}.{DIM:#}");
+    println!();
+}
+
+/// A length of time said the way it was typed: 300 seconds is "5m".
+fn spoken(length: std::time::Duration) -> String {
+    let seconds = length.as_secs();
+    match seconds {
+        0 => "no time".to_string(),
+        s if s % 3600 == 0 => format!("{}h", s / 3600),
+        s if s % 60 == 0 => format!("{}m", s / 60),
+        s => format!("{s}s"),
+    }
+}
+
+/// Wall-clock time of day, for a log someone reads as it happens. Only the clock
+/// is asked for: deplyd does no calendar arithmetic of its own.
+fn now_hms() -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0);
+    let day = seconds % 86_400;
+    format!("{:02}:{:02}:{:02}", day / 3600, (day % 3600) / 60, day % 60)
 }
 
 #[cfg(test)]

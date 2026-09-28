@@ -161,6 +161,9 @@ pub struct GitHub {
     owner: String,
     repo: String,
     caches: Mutex<Caches>,
+    /// The longest pause GitHub has asked for and nobody has acted on yet.
+    /// Kept apart from the caches, which `forget` empties.
+    paused: Mutex<Option<std::time::Duration>>,
 }
 
 impl GitHub {
@@ -170,6 +173,25 @@ impl GitHub {
             owner,
             repo,
             caches: Mutex::new(Caches::default()),
+            paused: Mutex::new(None),
+        }
+    }
+
+    /// How long GitHub asked deplyd to wait, if it has, clearing it as it answers.
+    ///
+    /// Most callers treat a failed request as an empty answer, which is right for
+    /// one run and wrong for a loop: the loop has to know the difference between
+    /// "nothing is happening" and "we were not told".
+    pub fn rate_limited(&self) -> Option<std::time::Duration> {
+        self.paused.lock().ok().and_then(|mut held| held.take())
+    }
+
+    /// Forgets what it has been told. A watcher asks the same questions on
+    /// purpose, and memoised answers would make it blind to the very thing it
+    /// is watching for.
+    pub fn forget(&self) {
+        if let Ok(mut caches) = self.caches.lock() {
+            *caches = Caches::default();
         }
     }
 
@@ -178,7 +200,16 @@ impl GitHub {
     }
 
     fn get(&self, route: &Route) -> Result<String, HttpError> {
-        self.http.get(route, &self.owner, &self.repo)
+        let answer = self.http.get(route, &self.owner, &self.repo);
+        // Noticed here because it is the one place every request passes through;
+        // the callers above swallow errors into empty answers.
+        if let Err(HttpError::RateLimited { wait, .. }) = &answer
+            && let Ok(mut held) = self.paused.lock()
+        {
+            let longest = held.map_or(*wait, |already| already.max(*wait));
+            *held = Some(longest);
+        }
+        answer
     }
 
     /// The tag of the newest published release, for the update check.

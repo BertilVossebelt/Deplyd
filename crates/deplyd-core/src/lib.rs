@@ -15,4 +15,5 @@ pub mod report;
 pub mod settings;
 pub mod targets;
 pub mod verdict;
+pub mod watch;
 pub mod yaml;

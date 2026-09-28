@@ -18,13 +18,11 @@ fn readme() -> String {
     std::fs::read_to_string(path).expect("README should be readable")
 }
 
-#[test]
-fn every_command_the_readme_lists_exists() {
-    let text = readme();
-    let mut checked = 0;
-
-    // Asked of the binary rather than of its source, so this checks what someone
-    // following the README would actually be able to run.
+/// The verbs the binary offers, in the order `--help` prints them.
+///
+/// Asked of the binary rather than of its source, so this is what someone
+/// following the README would actually be able to run.
+fn verbs_the_binary_offers() -> Vec<String> {
     let sandbox = Sandbox::empty();
     let help = sandbox.deplyd_stdout(&["--help"]);
     let listed: Vec<String> = help
@@ -36,33 +34,109 @@ fn every_command_the_readme_lists_exists() {
         .collect();
     assert!(
         !listed.is_empty(),
-        "could not read the command list:
-{help}"
+        "could not read the command list:\n{help}"
     );
+    listed
+}
+
+/// Every command the README puts forward, from both places it lists them: the
+/// block laying out the verbs that take a second word, and the table of the
+/// ones that do not.
+///
+/// Prose is deliberately not read. A sentence mentioning a verb is not a
+/// promise the way a listing is, and reading it would turn every "deplyd reads
+/// history" into a command that has to exist.
+fn commands_the_readme_lists(text: &str) -> Vec<(String, Option<String>)> {
+    let mut found = Vec::new();
+
+    // The block starts on the line spelling out the first verb in full.
+    let block = text
+        .lines()
+        .skip_while(|line| !line.starts_with("deplyd status"))
+        .take_while(|line| !line.starts_with("```"));
+    for line in block {
+        // The block is two columns, held apart by a run of spaces: the command
+        // on the left, what it does on the right. Only the left half is a claim.
+        let Some(command) = line.split("  ").find(|chunk| !chunk.trim().is_empty()) else {
+            continue;
+        };
+        let words: Vec<&str> = command
+            .trim()
+            .trim_start_matches("deplyd")
+            .split_whitespace()
+            .collect();
+        match words.as_slice() {
+            // A third word is the argument, e.g. the 412 in `status pr 412`.
+            [verb, second, ..] => found.push((verb.to_string(), Some(second.to_string()))),
+            [verb] => found.push((verb.to_string(), None)),
+            [] => {}
+        }
+    }
 
     for line in text.lines() {
         let Some(rest) = line.trim_start().strip_prefix("| `deplyd ") else {
             continue;
         };
-        let Some(command) = rest.split(['`', ' ']).next() else {
-            continue;
-        };
-        if command.is_empty() {
-            continue;
+        if let Some(verb) = rest.split(['`', ' ']).next().filter(|v| !v.is_empty()) {
+            found.push((verb.to_string(), None));
         }
+    }
 
+    found
+}
+
+#[test]
+fn every_command_the_readme_lists_exists() {
+    let text = readme();
+    let listed = verbs_the_binary_offers();
+    let claimed = commands_the_readme_lists(&text);
+
+    let sandbox = Sandbox::empty();
+    for (verb, second) in &claimed {
         assert!(
-            listed.contains(&command.to_string()),
-            "the README lists `deplyd {command}`, which the binary does not offer.
+            listed.contains(verb),
+            "the README lists `deplyd {verb}`, which the binary does not offer.
              it offers: {listed:?}"
         );
-        checked += 1;
+
+        // A second word is a subcommand, and only the binary knows whether it is one.
+        let Some(second) = second else { continue };
+        let help = sandbox.deplyd_stdout(&[verb, "--help"]);
+        let children: Vec<&str> = help
+            .lines()
+            .skip_while(|line| !line.starts_with("Commands:"))
+            .skip(1)
+            .take_while(|line| line.starts_with("  "))
+            .filter_map(|line| line.split_whitespace().next())
+            .collect();
+        assert!(
+            children.contains(&second.as_str()),
+            "the README lists `deplyd {verb} {second}`, which {verb} does not take.
+             it takes: {children:?}"
+        );
     }
 
     assert!(
-        checked >= 8,
-        "expected to check the command table, saw {checked}"
+        claimed.len() >= 12,
+        "expected to check both listings, saw {}",
+        claimed.len()
     );
+}
+
+#[test]
+fn every_command_the_binary_offers_is_in_the_readme() {
+    // The other direction: a verb added without a line about it is a verb nobody
+    // will find.
+    let text = readme();
+    let listed = verbs_the_binary_offers();
+    let claimed = commands_the_readme_lists(&text);
+
+    for verb in &listed {
+        assert!(
+            claimed.iter().any(|(named, _)| named == verb),
+            "the binary offers `deplyd {verb}`, which the README does not list"
+        );
+    }
 }
 
 #[test]
