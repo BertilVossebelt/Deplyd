@@ -37,15 +37,8 @@ fn world() -> (Sandbox, String) {
 #[test]
 fn waiting_for_something_already_live_stops_at_once() {
     let (sandbox, _) = world();
-    let (output, code) = sandbox.deplyd_stubbed(&[
-        "watch",
-        "--pr",
-        "101",
-        "--every",
-        "10s",
-        "-A",
-        "Ada Lovelace",
-    ]);
+    let (output, code) =
+        sandbox.deplyd_stubbed(&["watch", "pr", "101", "--every", "10s", "-A", "Ada Lovelace"]);
 
     assert!(
         output.contains("is live"),
@@ -61,7 +54,7 @@ fn waiting_for_something_that_never_arrives_gives_up_when_told_to() {
     let (sandbox, _) = world();
     let (output, code) = sandbox.deplyd_stubbed(&[
         "watch",
-        "--pr",
+        "pr",
         "102",
         "--for",
         "1s",
@@ -91,16 +84,18 @@ fn a_length_of_time_that_is_not_one_is_refused_before_anything_runs() {
 }
 
 #[test]
-fn asking_to_wait_for_two_things_at_once_is_refused() {
+fn asking_to_wait_for_two_things_at_once_cannot_be_spelled() {
+    // What it waits for is a subcommand now, so "both" is a parse error rather
+    // than a check that has to be remembered.
     let (sandbox, _) = world();
     let (output, code) =
-        sandbox.deplyd_stubbed(&["watch", "--pr", "101", "--commit", "HEAD", "--anyone"]);
+        sandbox.deplyd_stubbed(&["watch", "pr", "101", "commit", "HEAD", "--anyone"]);
 
     assert!(
-        output.contains("not both"),
-        "expected it to refuse two things to wait for, got:\n{output}"
+        !output.contains("Inspecting"),
+        "expected it to refuse before looking at anything, got:\n{output}"
     );
-    assert_eq!(code, 1);
+    assert_eq!(code, 2, "clap refuses an argument it has no room for");
 }
 
 #[test]
@@ -110,7 +105,7 @@ fn the_json_stream_carries_no_chatter() {
     let (sandbox, _) = world();
     let (output, code) = sandbox.deplyd_stubbed(&[
         "watch",
-        "--pr",
+        "pr",
         "101",
         "--every",
         "10s",

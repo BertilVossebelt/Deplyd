@@ -50,9 +50,10 @@ fn deployed(skipped: &[&str]) -> Deployed {
 #[test]
 fn a_change_inside_the_deploy_reads_as_deployd_and_exits_zero() {
     let world = deployed(&[]);
-    let (output, code) = world
-        .sandbox
-        .deplyd_stubbed(&["pr", "101", "-A", "Ada Lovelace"]);
+    let (output, code) =
+        world
+            .sandbox
+            .deplyd_stubbed(&["status", "pr", "101", "-A", "Ada Lovelace"]);
 
     assert!(output.contains("DEPLYD"), "got:\n{output}");
     assert!(!output.contains("NOT DEPLYD"), "got:\n{output}");
@@ -62,9 +63,10 @@ fn a_change_inside_the_deploy_reads_as_deployd_and_exits_zero() {
 #[test]
 fn a_change_after_the_deploy_reads_as_not_deployd_and_exits_two() {
     let world = deployed(&[]);
-    let (output, code) = world
-        .sandbox
-        .deplyd_stubbed(&["pr", "102", "-A", "Ada Lovelace"]);
+    let (output, code) =
+        world
+            .sandbox
+            .deplyd_stubbed(&["status", "pr", "102", "-A", "Ada Lovelace"]);
 
     assert!(output.contains("NOT DEPLYD"), "got:\n{output}");
     assert_eq!(code, 2);
@@ -77,7 +79,7 @@ fn the_same_question_about_a_commit_gives_the_same_answer() {
     let (inside, inside_code) =
         world
             .sandbox
-            .deplyd_stubbed(&["commit", &world.inside, "-A", "Ada Lovelace"]);
+            .deplyd_stubbed(&["status", "commit", &world.inside, "-A", "Ada Lovelace"]);
     assert!(inside.contains("DEPLYD"), "got:\n{inside}");
     assert!(
         inside.contains(&format!("commit {}", &world.inside[..7])),
@@ -89,7 +91,7 @@ fn the_same_question_about_a_commit_gives_the_same_answer() {
     let (after, after_code) =
         world
             .sandbox
-            .deplyd_stubbed(&["commit", &world.after, "-A", "Ada Lovelace"]);
+            .deplyd_stubbed(&["status", "commit", &world.after, "-A", "Ada Lovelace"]);
     assert!(after.contains("NOT DEPLYD"), "got:\n{after}");
     assert_eq!(after_code, 2);
 }
@@ -99,7 +101,7 @@ fn skipped_steps_are_listed_one_per_line() {
     let world = deployed(&["Build the front-end bundle", "Warm the cache"]);
     let (output, _) = world
         .sandbox
-        .deplyd_stubbed(&["pr", "101", "-A", "Ada Lovelace"]);
+        .deplyd_stubbed(&["status", "pr", "101", "-A", "Ada Lovelace"]);
 
     let steps = ["Build the front-end bundle", "Warm the cache"];
     let mut seen: Vec<&str> = Vec::new();
@@ -149,13 +151,14 @@ fn the_status_report_dates_and_labels_every_change() {
 fn json_and_text_agree_about_the_verdict() {
     let world = deployed(&[]);
 
-    let (text, text_code) = world
-        .sandbox
-        .deplyd_stubbed(&["pr", "101", "-A", "Ada Lovelace"]);
+    let (text, text_code) =
+        world
+            .sandbox
+            .deplyd_stubbed(&["status", "pr", "101", "-A", "Ada Lovelace"]);
     let (json, json_code) =
         world
             .sandbox
-            .deplyd_stubbed(&["pr", "101", "-A", "Ada Lovelace", "--json"]);
+            .deplyd_stubbed(&["status", "pr", "101", "-A", "Ada Lovelace", "--json"]);
 
     assert_eq!(
         text_code, json_code,
@@ -221,9 +224,10 @@ fn paging_past_the_end_says_so_rather_than_counting_backwards() {
 #[test]
 fn a_pull_request_that_does_not_exist_exits_five() {
     let world = deployed(&[]);
-    let (output, code) = world
-        .sandbox
-        .deplyd_stubbed(&["pr", "999", "-A", "Ada Lovelace"]);
+    let (output, code) =
+        world
+            .sandbox
+            .deplyd_stubbed(&["status", "pr", "999", "-A", "Ada Lovelace"]);
 
     assert!(output.contains("not found"), "got:\n{output}");
     assert_eq!(code, 5);
@@ -233,6 +237,7 @@ fn a_pull_request_that_does_not_exist_exits_five() {
 fn a_commit_this_clone_does_not_have_is_refused_clearly() {
     let world = deployed(&[]);
     let (output, code) = world.sandbox.deplyd_stubbed(&[
+        "status",
         "commit",
         "0000000000000000000000000000000000000000",
         "-A",
@@ -264,7 +269,7 @@ fn a_change_outside_every_scope_shows_what_was_compared() {
         &merged_pr_json(300, "docs: tidy", &elsewhere),
     );
 
-    let (output, code) = sandbox.deplyd_stubbed(&["pr", "300", "-A", "Ada Lovelace"]);
+    let (output, code) = sandbox.deplyd_stubbed(&["status", "pr", "300", "-A", "Ada Lovelace"]);
 
     assert!(output.contains("NOT COVERED"), "got:\n{output}");
     assert!(
@@ -349,7 +354,7 @@ fn init_writes_what_detection_found_and_leaves_the_repo_alone() {
     sandbox.write("services/api/a.txt", "a");
     sandbox.commit("first");
 
-    let (output, code) = sandbox.deplyd_stubbed(&["init"]);
+    let (output, code) = sandbox.deplyd_stubbed(&["config", "init"]);
     assert!(output.contains("Wrote "), "got:\n{output}");
     assert!(
         output.contains("your repository is left alone"),
@@ -364,12 +369,12 @@ fn init_writes_what_detection_found_and_leaves_the_repo_alone() {
     );
 
     // And running it again refuses rather than overwriting.
-    let (again, again_code) = sandbox.deplyd_stubbed(&["init"]);
+    let (again, again_code) = sandbox.deplyd_stubbed(&["config", "init"]);
     assert!(again.contains("already a settings file"), "got:\n{again}");
     assert_eq!(again_code, 1);
 
     // --force rewrites it.
-    let (forced, forced_code) = sandbox.deplyd_stubbed(&["init", "--force"]);
+    let (forced, forced_code) = sandbox.deplyd_stubbed(&["config", "init", "--force"]);
     assert!(forced.contains("Wrote "), "got:\n{forced}");
     assert_eq!(forced_code, 0);
 }
@@ -406,9 +411,10 @@ fn completions_are_generated_for_every_shell_clap_knows() {
 fn the_json_uses_the_same_vocabulary_as_the_report() {
     let world = deployed(&[]);
 
-    let deployd = world
-        .sandbox
-        .deplyd_stdout(&["pr", "101", "-A", "Ada Lovelace", "--json"]);
+    let deployd =
+        world
+            .sandbox
+            .deplyd_stdout(&["status", "pr", "101", "-A", "Ada Lovelace", "--json"]);
     let parsed: serde_json::Value = serde_json::from_str(deployd.trim()).expect("json");
 
     assert_eq!(parsed["change"]["kind"], "pullRequest");
@@ -416,9 +422,10 @@ fn the_json_uses_the_same_vocabulary_as_the_report() {
     assert_eq!(parsed["change"]["targets"][0]["status"], "deplyd");
     assert_eq!(parsed["targets"][0]["state"], "deplyd");
 
-    let not_deployd = world
-        .sandbox
-        .deplyd_stdout(&["pr", "102", "-A", "Ada Lovelace", "--json"]);
+    let not_deployd =
+        world
+            .sandbox
+            .deplyd_stdout(&["status", "pr", "102", "-A", "Ada Lovelace", "--json"]);
     let parsed: serde_json::Value = serde_json::from_str(not_deployd.trim()).expect("json");
     assert_eq!(parsed["change"]["status"], "not-deplyd");
     assert_eq!(parsed["change"]["targets"][0]["status"], "not-deplyd");
@@ -435,10 +442,14 @@ fn the_json_uses_the_same_vocabulary_as_the_report() {
 #[test]
 fn a_commit_is_not_given_fields_a_commit_does_not_have() {
     let world = deployed(&[]);
-    let stdout =
-        world
-            .sandbox
-            .deplyd_stdout(&["commit", &world.inside, "-A", "Ada Lovelace", "--json"]);
+    let stdout = world.sandbox.deplyd_stdout(&[
+        "status",
+        "commit",
+        &world.inside,
+        "-A",
+        "Ada Lovelace",
+        "--json",
+    ]);
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("json");
 
     assert_eq!(parsed["change"]["kind"], "commit");

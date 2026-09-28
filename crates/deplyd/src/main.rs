@@ -25,7 +25,7 @@ use deplyd_core::settings::Settings;
 use deplyd_core::targets::{self, TargetSet};
 use deplyd_core::verdict;
 
-use cli::{Cli, Command};
+use cli::{Change, Cli, Command, ConfigAction, ListWhat};
 use render::Output;
 use term::WebBase;
 
@@ -41,26 +41,14 @@ fn main() -> ExitCode {
         return code;
     }
 
-    let parsed = Cli::parse();
-    let options = parsed.options.clone();
-    let output = Output { json: options.json };
-
-    let Some(command) = parsed.command else {
-        // A half-typed command line says what the verbs are and stops.
-        show_help();
-        return ExitCode::SUCCESS;
+    let parsed = match Cli::try_parse() {
+        Ok(parsed) => parsed,
+        Err(error) => return misread(error),
     };
 
-    if options.json && !command.supports_json() {
-        render::stop(
-            &format!("--json has nothing to say about '{}'", command.name()),
-            &[
-                "It is available for the two commands that reach a verdict:".into(),
-                "  deplyd status --json".into(),
-                "  deplyd pr 412 --json".into(),
-            ],
-        );
-    }
+    let command = parsed.command;
+    let options = command.options();
+    let output = Output { json: options.json };
 
     match &command {
         Command::Check => {
@@ -92,13 +80,19 @@ fn main() -> ExitCode {
 
     let repo = open_repo(&options.repo_path, &settings);
 
-    if matches!(command, Command::Authors) {
+    if matches!(
+        command,
+        Command::List {
+            what: ListWhat::Authors,
+            ..
+        }
+    ) {
         render::authors(&repo);
         return ExitCode::SUCCESS;
     }
 
     // Before the author is resolved: a tab press must not error on a missing name.
-    if let Command::Complete { what } = &command {
+    if let Command::Complete { what, .. } = &command {
         complete(&repo, &settings, what.as_deref());
         return ExitCode::SUCCESS;
     }
@@ -121,13 +115,25 @@ fn main() -> ExitCode {
         Err(error) => stop_for_context(&error, &repo),
     };
 
-    if matches!(command, Command::Environments) {
+    if matches!(
+        command,
+        Command::List {
+            what: ListWhat::Environments,
+            ..
+        }
+    ) {
         render::environments(&context);
         return ExitCode::SUCCESS;
     }
 
     // Before an environment is chosen, which such a repo may well reject.
-    if matches!(command, Command::Init) {
+    if matches!(
+        command,
+        Command::Config {
+            action: Some(ConfigAction::Init { .. }),
+            ..
+        }
+    ) {
         init::run(&context, &repo, options.force);
         return ExitCode::SUCCESS;
     }
@@ -136,7 +142,7 @@ fn main() -> ExitCode {
         stop_for_context(&error, &repo);
     }
 
-    if matches!(command, Command::Config) {
+    if matches!(command, Command::Config { action: None, .. }) {
         render::config(&context);
         return ExitCode::SUCCESS;
     }
@@ -145,17 +151,11 @@ fn main() -> ExitCode {
 
     // Read the argument first: a typo in it is worth saying before a missing
     // credential is.
-    let commit_reference = match &command {
-        Command::Commit { reference } => match reference.as_deref().map(str::trim) {
-            Some(text) if !text.is_empty() => Some(text.to_string()),
-            _ => render::stop(
-                "Which commit?",
-                &[
-                    "deplyd commit a1b2c3d".into(),
-                    "Anything git accepts works: a sha, a branch, a tag, HEAD.".into(),
-                ],
-            ),
-        },
+    let verb = command.name();
+    let asked = match &command {
+        Command::Status { change, .. } | Command::Watch { change, .. } => {
+            change.as_ref().map(|change| Asked::read(change, verb))
+        }
         _ => None,
     };
 
@@ -163,25 +163,13 @@ fn main() -> ExitCode {
     // duration is the user's to fix, and finding out after a round trip is worse.
     let watch_plan = match &command {
         Command::Watch {
-            pull_request,
-            commit,
-            duration,
-            every,
+            duration, every, ..
         } => Some(WatchPlan::read(
-            pull_request.as_deref(),
-            commit.as_deref(),
+            asked.clone(),
             duration.as_deref(),
             every.as_deref(),
             context.settings.watch_every,
         )),
-        _ => None,
-    };
-
-    let pull_request_number = match &command {
-        Command::Pr { number } => match cli::read_pull_request_number(number.as_ref()) {
-            Ok(number) => Some(number),
-            Err(message) => render::stop(&message, &["deplyd pr 412".into()]),
-        },
         _ => None,
     };
 
@@ -224,35 +212,27 @@ fn main() -> ExitCode {
         );
     }
 
-    if let Some(reference) = commit_reference {
-        let report = verdict::commit_report(&context, &repo, &targets, &reference);
-
-        if report.status == verdict::Status::NotFound {
-            render::stop(
-                &format!("No such commit in this clone: {reference}"),
-                &[
-                    "deplyd reads history from your own clone, so it has to be there.".into(),
-                    "Fetch, then run this again.".into(),
-                ],
-            );
-        }
-
-        if options.json {
-            print_json(&verdict::PullRequestJson {
-                change: report.clone(),
-                targets: verdict::target_reports(&context, &targets),
-            });
-        } else {
-            render::target_summary(&context, &targets, &repo, &web, None);
-            render::change(&targets, &report, &web);
-        }
-
-        return ExitCode::from(verdict::exit_code(report.status, report.uncertain));
-    }
-
-    match pull_request_number {
-        Some(number) => {
-            let report = verdict::pull_request_report(&context, &repo, &github, &targets, number);
+    match asked {
+        Some(change) => {
+            let report = match &change {
+                Asked::Commit(reference) => {
+                    let report = verdict::commit_report(&context, &repo, &targets, reference);
+                    if report.status == verdict::Status::NotFound {
+                        render::stop(
+                            &format!("No such commit in this clone: {reference}"),
+                            &[
+                                "deplyd reads history from your own clone, so it has to be there."
+                                    .into(),
+                                "Fetch, then run this again.".into(),
+                            ],
+                        );
+                    }
+                    report
+                }
+                Asked::PullRequest(number) => {
+                    verdict::pull_request_report(&context, &repo, &github, &targets, *number)
+                }
+            };
 
             if options.json {
                 let document = verdict::PullRequestJson {
@@ -320,6 +300,100 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
     }
+}
+
+/// A command line that could not be read.
+///
+/// clap answers a typo with a usage block, and a missing subcommand with the
+/// whole help page. Neither is what someone who mistyped one word needs, so
+/// this says what was not understood and leaves finding the rest to `--help`.
+fn misread(error: clap::Error) -> ExitCode {
+    use clap::error::{ContextKind, ContextValue, ErrorKind};
+
+    // --help and --version are not mistakes: they are the output.
+    if matches!(
+        error.kind(),
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+    ) {
+        let _ = error.print();
+        if error.kind() == ErrorKind::DisplayHelp {
+            show_reading_key(help_subject().as_deref());
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    let one = |kind| match error.get(kind) {
+        Some(ContextValue::String(value)) => Some(value.clone()),
+        _ => None,
+    };
+    let many = |kind| match error.get(kind) {
+        Some(ContextValue::Strings(values)) => values.clone(),
+        _ => Vec::new(),
+    };
+
+    let mut hints: Vec<String> = Vec::new();
+    // Which verb the mistake was under, so --help can point at that one.
+    let mut verb = "deplyd".to_string();
+
+    let said = match error.kind() {
+        ErrorKind::InvalidSubcommand => {
+            let what = one(ContextKind::InvalidSubcommand).unwrap_or_else(|| "that".into());
+            for near in many(ContextKind::SuggestedSubcommand) {
+                hints.push(format!("Did you mean {}?", near.trim_matches('\'')));
+            }
+            format!("deplyd has no '{what}' command.")
+        }
+        ErrorKind::UnknownArgument => {
+            let what = one(ContextKind::InvalidArg).unwrap_or_else(|| "that".into());
+            for near in many(ContextKind::SuggestedArg) {
+                hints.push(format!("Did you mean {}?", near.trim_matches('\'')));
+            }
+            format!("'{what}' is not one of this command's options.")
+        }
+        ErrorKind::MissingSubcommand => {
+            // clap names the path as it was invoked, e.g. "deplyd.exe list".
+            let path = one(ContextKind::InvalidSubcommand).unwrap_or_default();
+            let mut words = path.split_whitespace().skip(1).peekable();
+            let nested = words.peek().is_some();
+
+            // Asked of the tree rather than taken from the error: clap's list of
+            // valid subcommands counts `complete`, which is hidden because the
+            // shell calls it and people do not.
+            let choices = visible_children(words);
+            if !choices.is_empty() {
+                hints.push(choices.join(", "));
+            }
+
+            if nested {
+                verb = path.replace(".exe", "");
+                format!("{verb} needs to know which one.")
+            } else {
+                "deplyd needs to know what to do.".to_string()
+            }
+        }
+        // Everything else is about a value, and clap's own first line already
+        // names it better than a guess from the kind would.
+        _ => summary(&error),
+    };
+
+    hints.push(format!("Run {verb} --help to see what it takes."));
+    render::refuse(&said, &hints);
+    // 2 is what a shell expects of a usage error, and is not one of the verdicts.
+    ExitCode::from(2)
+}
+
+/// clap's own first line, without its "error: " prefix or the usage block under it.
+fn summary(error: &clap::Error) -> String {
+    let rendered = error.render().to_string();
+    let first = rendered
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or_default();
+    first
+        .trim()
+        .strip_prefix("error: ")
+        .unwrap_or(first.trim())
+        .to_string()
 }
 
 fn print_json<T: serde::Serialize>(document: &T) {
@@ -436,31 +510,32 @@ fn open_github(repo: &Repo) -> (GitHub, (String, String), WebBase) {
     }
 }
 
-/// What a watcher was told to wait for, if anything.
-enum WatchUntil {
-    Forever,
+/// The one change a command was pointed at. `status` reports on it, `watch`
+/// waits for it; being a subcommand, it cannot be both at once.
+#[derive(Clone)]
+enum Asked {
     PullRequest(u32),
     Commit(String),
 }
 
-impl WatchUntil {
-    fn read(pull_request: Option<&str>, commit: Option<&str>) -> Self {
-        match (pull_request, commit) {
-            (Some(_), Some(_)) => render::stop(
-                "Wait for a pull request or for a commit, not both.",
-                &["deplyd watch --pr 412".into()],
-            ),
-            (Some(number), None) => {
-                match cli::read_pull_request_number(Some(&number.to_string())) {
-                    Ok(number) => WatchUntil::PullRequest(number),
-                    Err(message) => render::stop(&message, &["deplyd watch --pr 412".into()]),
-                }
-            }
-            (None, Some(reference)) => match reference.trim() {
-                "" => render::stop("Which commit?", &["deplyd watch --commit a1b2c3d".into()]),
-                text => WatchUntil::Commit(text.to_string()),
+impl Asked {
+    /// `verb` spells the example back the way it was typed: `status pr`, `watch pr`.
+    fn read(change: &Change, verb: &str) -> Self {
+        match change {
+            Change::Pr { number } => match cli::read_pull_request_number(number.as_ref()) {
+                Ok(number) => Asked::PullRequest(number),
+                Err(message) => render::stop(&message, &[format!("deplyd {verb} 412")]),
             },
-            (None, None) => WatchUntil::Forever,
+            Change::Commit { reference } => match reference.as_deref().map(str::trim) {
+                Some(text) if !text.is_empty() => Asked::Commit(text.to_string()),
+                _ => render::stop(
+                    "Which commit?",
+                    &[
+                        format!("deplyd {verb} a1b2c3d"),
+                        "Anything git accepts works: a sha, a branch, a tag, HEAD.".into(),
+                    ],
+                ),
+            },
         }
     }
 }
@@ -471,15 +546,14 @@ const FASTEST_LOOK: Duration = Duration::from_secs(10);
 
 /// Everything `watch` was asked for, checked before anything is fetched.
 struct WatchPlan {
-    until: WatchUntil,
+    until: Option<Asked>,
     every: Duration,
     length: Option<Duration>,
 }
 
 impl WatchPlan {
     fn read(
-        pull_request: Option<&str>,
-        commit: Option<&str>,
+        until: Option<Asked>,
         duration: Option<&str>,
         every: Option<&str>,
         kept: Option<u32>,
@@ -502,7 +576,7 @@ impl WatchPlan {
         }
 
         Self {
-            until: WatchUntil::read(pull_request, commit),
+            until,
             every: interval,
             length: duration.map(|given| read_interval(Some(given), 0, "--for")),
         }
@@ -552,7 +626,7 @@ fn watch_loop(
     let (mut runs, mut targets) = first;
 
     if !options.json {
-        render::watch_opening(context, &until, every, deadline.is_some());
+        render::watch_opening(context, until.as_ref(), every, deadline.is_some());
     }
 
     loop {
@@ -598,7 +672,8 @@ fn watch_loop(
 
         // Asked after the events, so the run that carried a change is reported
         // before the watcher exits on it.
-        if let Some((code, reason)) = watch_reached(context, repo, github, &targets, &until) {
+        if let Some((code, reason)) = watch_reached(context, repo, github, &targets, until.as_ref())
+        {
             if !options.json {
                 render::watch_closing(reason);
             }
@@ -646,14 +721,13 @@ fn watch_reached(
     repo: &Repo,
     github: &GitHub,
     targets: &TargetSet,
-    until: &WatchUntil,
+    until: Option<&Asked>,
 ) -> Option<(ExitCode, &'static str)> {
-    let report = match until {
-        WatchUntil::Forever => return None,
-        WatchUntil::PullRequest(number) => {
+    let report = match until? {
+        Asked::PullRequest(number) => {
             verdict::pull_request_report(context, repo, github, targets, *number)
         }
-        WatchUntil::Commit(reference) => verdict::commit_report(context, repo, targets, reference),
+        Asked::Commit(reference) => verdict::commit_report(context, repo, targets, reference),
     };
 
     match report.status {
@@ -883,7 +957,7 @@ fn stop_for_context(error: &ContextError, repo: &Repo) -> ! {
         } => {
             let mut hints = vec![
                 format!("Detected: {}", detected.join(", ")),
-                "Run deplyd environments to see where each one came from.".into(),
+                "Run deplyd list environments to see where each one came from.".into(),
             ];
             if *from_settings {
                 // Nobody typed this, so say where it came from before they go looking.
@@ -969,12 +1043,7 @@ fn remember(settings: &mut Settings, what: Option<&str>, value: Option<&str>) {
 
     match settings.save() {
         Ok(path) => {
-            println!(
-                "{}Saved to {}{:#}",
-                term::GREEN,
-                path.display(),
-                term::GREEN
-            );
+            println!("{}Saved to {}{:#}", term::OK, path.display(), term::OK);
             if let Some(author) = &settings.author {
                 println!("  author = {author}");
             }
@@ -1023,37 +1092,131 @@ fn gh_install_hint() -> &'static str {
     }
 }
 
-fn show_help() {
-    let mut built = <Cli as clap::CommandFactory>::command();
-    let _ = built.print_help();
+/// The subcommands a verb offers, hidden ones left out. `path` is the words
+/// after the binary name, so an empty one asks the root.
+fn visible_children<'a>(path: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let built = <Cli as clap::CommandFactory>::command();
+    let mut here = &built;
+    for word in path {
+        match here.get_subcommands().find(|sub| sub.get_name() == word) {
+            Some(found) => here = found,
+            None => return Vec::new(),
+        }
+    }
+    here.get_subcommands()
+        .filter(|sub| !sub.is_hide_set())
+        .map(|sub| sub.get_name().to_string())
+        .collect()
+}
+
+/// Which verb's `--help` was asked for, resolved the way clap resolves it so
+/// that `deplyd st --help` counts as `status`.
+fn help_subject() -> Option<String> {
+    let built = <Cli as clap::CommandFactory>::command();
+    let word = std::env::args().skip(1).find(|a| !a.starts_with('-'))?;
+
+    if let Some(exact) = built.get_subcommands().find(|s| s.get_name() == word) {
+        return Some(exact.get_name().to_string());
+    }
+    // A prefix counts only while it still names one verb, as at parse time.
+    let mut matching = built
+        .get_subcommands()
+        .filter(|s| s.get_name().starts_with(&word));
+    let first = matching.next()?;
+    matching
+        .next()
+        .is_none()
+        .then(|| first.get_name().to_string())
+}
+
+/// The words the reports use, under the help of the verbs that print them.
+///
+/// On the root help this was a wall nobody asked for. Here it sits beside the
+/// thing it explains, and `list` or `check` never shows it at all.
+fn show_reading_key(verb: Option<&str>) {
+    let (status, watch) = (Some("status") == verb, Some("watch") == verb);
+    if !status && !watch {
+        return;
+    }
+
     println!();
-    println!("{}PER TARGET{:#}", term::CYAN, term::CYAN);
-    println!("  DEPLYD      built and released; no newer deploy failing or in flight");
-    println!("  UNCERTAIN   a newer deploy for that target did not complete");
-    println!("  skipped     steps the run skipped - changes to those are not live");
+    println!("{}Per target{:#}", term::ACCENT, term::ACCENT);
+    key(
+        term::OK,
+        "DEPLYD",
+        "built and released; no newer deploy failing or in flight",
+    );
+    key(
+        term::WARN,
+        "UNCERTAIN",
+        "a newer deploy did not complete, or the commit read badly",
+    );
+    key(
+        term::WARN,
+        "skipped",
+        "steps the run skipped - changes to those are not live",
+    );
+
     println!();
-    println!("{}PER PULL REQUEST{:#}", term::CYAN, term::CYAN);
-    println!("  DEPLYD      the commit, or an equivalent cherry-pick, is in the deployed commit");
-    println!("  REVERTED    it shipped, then was undone before the deployed commit");
-    println!("  NOT DEPLYD  neither the commit nor an equivalent change is there");
-    println!("  NOT MERGED  still open, or closed without merging");
-    println!("  NOT COVERED it changed no path any target covers; names them so you can check");
+    println!("{}Per change{:#}", term::ACCENT, term::ACCENT);
+    key(
+        term::OK,
+        "DEPLYD",
+        "the commit, or an equivalent cherry-pick, is in the deploy",
+    );
+    key(
+        term::BAD,
+        "REVERTED",
+        "it shipped, then was undone before the deployed commit",
+    );
+    key(
+        term::BAD,
+        "NOT DEPLYD",
+        "neither the commit nor an equivalent change is there",
+    );
+    key(
+        term::WARN,
+        "NOT MERGED",
+        "still open, or closed without merging",
+    );
+    key(
+        term::WARN,
+        "NOT COVERED",
+        "it changed no path any target covers",
+    );
+
     println!();
-    println!("{}EXIT CODES for deplyd pr{:#}", term::CYAN, term::CYAN);
-    println!("  0  deplyd          3  reverted        5  no such pull request");
-    println!("  2  not deplyd      4  not merged      6  deplyd, but see UNCERTAIN");
-    println!("  1  deplyd could not run");
+    println!("{}Exit codes{:#}", term::ACCENT, term::ACCENT);
+    if status {
+        println!(
+            "  {}status pr{:#} and {}status commit{:#} answer with one:",
+            term::OK,
+            term::OK,
+            term::OK,
+            term::OK
+        );
+        println!("  0 deplyd       2 not deplyd   3 reverted");
+        println!("  4 not merged   5 no such PR   6 deplyd, but see UNCERTAIN");
+        println!("  1 deplyd could not run");
+    } else {
+        println!("  0  what it waited for went live, or --for ran out");
+        // A change that can never go live is not something to wait out, so the
+        // loop stops on the verdict rather than running to the deadline.
+        println!("  2  it covers no target, so it can never go live");
+        println!("  5  no such pull request");
+        println!("  1  deplyd could not run");
+    }
     println!();
-    println!("Everything is detected from .github/workflows. Run \"deplyd config\" to see");
-    println!("what it found, and \"deplyd init\" to write it somewhere you can correct it.");
-    println!();
+}
+
+/// One row of the key: the word in the colour the reports print it, then what
+/// it means.
+fn key(style: anstyle::Style, word: &str, meaning: &str) {
     println!(
-        "{}Requires the GitHub CLI: {}, then gh auth login.{:#}",
+        "  {style}{word:<12}{style:#}{}{meaning}{:#}",
         term::DIM,
-        gh_install_hint(),
         term::DIM
     );
-    println!();
 }
 
 /// `check`: what the gateway allows, and whether this binary still obeys it.
@@ -1088,7 +1251,7 @@ fn show_update() {
     };
 
     println!();
-    println!("{}deplyd {current}{:#}", term::CYAN, term::CYAN);
+    println!("{}deplyd {current}{:#}", term::ACCENT, term::ACCENT);
     println!();
 
     match latest.as_deref() {
@@ -1112,7 +1275,7 @@ fn show_update() {
 
 fn show_uninstall() {
     println!();
-    println!("{}Removing deplyd{:#}", term::CYAN, term::CYAN);
+    println!("{}Removing deplyd{:#}", term::ACCENT, term::ACCENT);
     println!();
     println!("  The installer takes back what it put there. Run:");
     println!();
@@ -1139,14 +1302,18 @@ fn show_uninstall() {
 
 fn show_self_check() {
     println!();
-    println!("{}deplyd read-only self-check{:#}", term::CYAN, term::CYAN);
+    println!(
+        "{}deplyd read-only self-check{:#}",
+        term::ACCENT,
+        term::ACCENT
+    );
     println!();
 
     for result in selfcheck::run() {
         let (mark, style) = if result.passed {
-            ("PASS", term::GREEN)
+            ("PASS", term::OK)
         } else {
-            ("FAIL", term::RED)
+            ("FAIL", term::BAD)
         };
         println!(
             "  {:<20}{style}{mark}{style:#}  {}",
@@ -1159,7 +1326,7 @@ fn show_self_check() {
         "  writes on disk      only inside {}",
         deplyd_core::settings::config_directory().display()
     );
-    println!("                      remembered defaults, and what deplyd init scaffolds");
+    println!("                      remembered defaults, and what deplyd config init scaffolds");
     println!("  the one git write   fetch, which updates your own remote-tracking refs");
     println!("                      nothing is sent, and a fetch cannot change a remote");
     println!();

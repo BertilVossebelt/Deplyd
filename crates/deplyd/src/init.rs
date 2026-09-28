@@ -13,7 +13,7 @@ use deplyd_core::settings::{EnvironmentOverride, Override, write_json};
 use deplyd_core::targets::{matched_ignore_words, target_label};
 
 use crate::render;
-use crate::term::{CYAN, DIM, YELLOW};
+use crate::term::{ACCENT, DIM, WARN};
 
 /// What detection concluded, in the shape `.deplyd.json` takes. Built from the
 /// current conclusion, which already includes whatever the existing file sets -
@@ -71,7 +71,7 @@ pub fn run(context: &Context, repo: &Repo, force: bool) {
                     "Nothing was changed. deplyd reads that file in preference, so rewriting it"
                         .into(),
                     "edits a tracked file and shows up as a modification:".into(),
-                    "  deplyd init --force".into(),
+                    "  deplyd config init --force".into(),
                     "Read the result with git diff before committing it.".into(),
                 ],
             );
@@ -82,7 +82,7 @@ pub fn run(context: &Context, repo: &Repo, force: bool) {
                 path.display().to_string(),
                 "Nothing was changed. To rewrite it from what deplyd concludes now, which".into(),
                 "includes whatever that file already sets:".into(),
-                "  deplyd init --force".into(),
+                "  deplyd config init --force".into(),
             ],
         );
     }
@@ -93,19 +93,19 @@ pub fn run(context: &Context, repo: &Repo, force: bool) {
     }
 
     println!();
-    println!("{CYAN}Wrote {}{CYAN:#}", path.display());
+    println!("{ACCENT}Wrote {}{ACCENT:#}", path.display());
     println!();
 
     if tracked {
         // "Changes nothing" is false here: this is a tracked file that just changed.
-        println!("{YELLOW}  git is tracking that file, so it now shows as modified.{YELLOW:#}");
-        println!("{YELLOW}  Read it with git diff before committing it.{YELLOW:#}");
+        println!("{WARN}  git is tracking that file, so it now shows as modified.{WARN:#}");
+        println!("{WARN}  Read it with git diff before committing it.{WARN:#}");
         println!();
         println!(
             "{DIM}  It holds what deplyd already concluded, so deplyd behaves as before.{DIM:#}"
         );
     } else if context.override_location.shared {
-        println!("{YELLOW}  It is in your working tree, though git is not tracking it.{YELLOW:#}");
+        println!("{WARN}  It is in your working tree, though git is not tracking it.{WARN:#}");
         println!();
         println!("{DIM}  It holds what detection found, so it changes nothing on its own.{DIM:#}");
     } else {
