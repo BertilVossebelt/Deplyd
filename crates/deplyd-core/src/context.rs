@@ -104,6 +104,8 @@ pub struct Context {
     /// Workflows that deploy.
     pub deploy_workflows: Vec<usize>,
     pub ignore_jobs: Vec<String>,
+    /// Job names the override file insists are targets, evidence or not.
+    pub target_jobs: Vec<String>,
     pub environments: Vec<String>,
     /// The chosen environment, empty when the repository names none.
     pub environment: String,
@@ -221,6 +223,11 @@ impl Context {
                     .collect()
             });
 
+        let target_jobs = overrides
+            .as_ref()
+            .map(|o| o.target_jobs.clone())
+            .unwrap_or_default();
+
         let mut context = Self {
             repo_root: repo_root.to_path_buf(),
             author,
@@ -233,6 +240,7 @@ impl Context {
             environment_workflows: deploy_workflows.clone(),
             deploy_workflows,
             ignore_jobs,
+            target_jobs,
             environments: Vec::new(),
             environment: String::new(),
             narrowed_by_name: false,

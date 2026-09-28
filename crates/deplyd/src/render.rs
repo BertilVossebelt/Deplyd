@@ -183,7 +183,13 @@ fn verdict_line(
         (mark.ok, "DEPLYD", OK)
     };
 
-    let (short, when, subject) = commit_parts(repo, &target.sha);
+    let (short, committed, subject) = commit_parts(repo, &target.sha);
+
+    // The deploy's time, not the commit's. "When did this go live" is the
+    // question; how old the code is answers a different one. The commit's date
+    // stands in only when GitHub told us nothing usable.
+    let when = deplyd_core::when::local_minute(&target.deployed_at).unwrap_or(committed);
+
     let linked = term::link(&short, &web.commit(&target.sha));
     let width = term::FIELD;
 
@@ -203,7 +209,9 @@ fn commit_parts(repo: &deplyd_core::repo::Repo, sha: &str) -> (String, String, S
         &[
             "-1",
             "--format=%h%x09%cd%x09%s",
-            "--date=format:%Y-%m-%d %H:%M",
+            // See report.rs: every time deplyd prints is in the reader's zone,
+            // not whichever one the commit happened to record.
+            "--date=format-local:%Y-%m-%d %H:%M",
             sha,
         ],
     ) else {

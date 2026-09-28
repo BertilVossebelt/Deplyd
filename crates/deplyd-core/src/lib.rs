@@ -16,4 +16,5 @@ pub mod settings;
 pub mod targets;
 pub mod verdict;
 pub mod watch;
+pub mod when;
 pub mod yaml;

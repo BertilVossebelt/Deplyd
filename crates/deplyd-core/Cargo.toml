@@ -10,6 +10,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+chrono = { workspace = true }
 deplyd-gateway = { path = "../deplyd-gateway" }
 regex = "1.13.1"
 serde = { workspace = true }

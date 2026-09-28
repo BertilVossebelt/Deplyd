@@ -78,6 +78,8 @@ pub struct Job {
     #[serde(default)]
     pub started_at: Option<String>,
     #[serde(default)]
+    pub completed_at: Option<String>,
+    #[serde(default)]
     pub steps: Vec<Step>,
 }
 
