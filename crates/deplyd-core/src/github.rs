@@ -221,6 +221,35 @@ impl GitHub {
         Some(parsed.tag_name)
     }
 
+    /// What is left of the hourly allowance, and when it refills.
+    ///
+    /// Read from the headers of a real request rather than from `/rate_limit`,
+    /// which answers about a window of its own: against a `gh` token it reports
+    /// 5000 of 5000 used 0 while the headers on the same exchange count down
+    /// correctly. One cheap request is made if nothing has been asked yet, so
+    /// the number is this moment's rather than the last command's.
+    pub fn quota(&self) -> Result<Quota, HttpError> {
+        if self.http.allowance().is_none() {
+            // One from each window. Asking only one gives that window's answer,
+            // which is how this reported thousands left while the other window
+            // was a hundred and fifty requests further along.
+            let _ = self.get(&Route::LatestRelease);
+            let _ = self.get(&Route::Deployments {
+                environment: None,
+                limit: 1,
+            });
+        }
+        let stated = self.http.allowance().ok_or_else(|| {
+            HttpError::Transport("GitHub said nothing about the allowance".into())
+        })?;
+
+        Ok(Quota {
+            limit: stated.limit,
+            remaining: stated.remaining,
+            reset: stated.reset,
+        })
+    }
+
     /// Recent runs of one workflow.
     pub fn runs_for_workflow(&self, workflow_file: &str) -> Result<Vec<Run>, HttpError> {
         let body = self.get(&Route::WorkflowRuns {
@@ -521,6 +550,85 @@ fn run_id_from_log_url(url: &str) -> Option<u64> {
     let (_, tail) = url.split_once("/actions/runs/")?;
     let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
     digits.parse().ok()
+}
+
+/// The account's hourly allowance for ordinary API reads.
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
+pub struct Quota {
+    pub limit: u32,
+    pub remaining: u32,
+    /// Unix time at which the allowance refills.
+    pub reset: i64,
+}
+
+impl Quota {
+    pub fn used(&self) -> u32 {
+        self.limit.saturating_sub(self.remaining)
+    }
+
+    /// 0.0 to 1.0. A limit of zero would be a divide by zero and is not a real
+    /// answer, so it reads as spent.
+    pub fn spent(&self) -> f64 {
+        if self.limit == 0 {
+            return 1.0;
+        }
+        f64::from(self.used()) / f64::from(self.limit)
+    }
+
+    /// How long until it refills, or None once that moment has passed.
+    pub fn refills_in(&self) -> Option<std::time::Duration> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_secs() as i64;
+        let left = self.reset - now;
+        (left > 0).then(|| std::time::Duration::from_secs(left as u64))
+    }
+}
+
+#[cfg(test)]
+mod quota_tests {
+    use super::Quota;
+
+    fn at(limit: u32, remaining: u32) -> Quota {
+        Quota {
+            limit,
+            remaining,
+            reset: 0,
+        }
+    }
+
+    #[test]
+    fn what_is_spent_is_what_is_gone() {
+        let quota = at(5000, 4000);
+        assert_eq!(quota.used(), 1000);
+        assert!((quota.spent() - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_limit_of_nothing_reads_as_spent_rather_than_dividing_by_zero() {
+        let quota = at(0, 0);
+        assert_eq!(quota.used(), 0);
+        assert!((quota.spent() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn more_remaining_than_the_limit_does_not_wrap() {
+        // Not a shape GitHub sends, but saturating_sub is the reason it cannot
+        // turn into four billion used.
+        let quota = at(10, 99);
+        assert_eq!(quota.used(), 0);
+    }
+
+    #[test]
+    fn a_reset_already_past_is_no_wait_at_all() {
+        let quota = Quota {
+            limit: 5000,
+            remaining: 0,
+            reset: 1,
+        };
+        assert_eq!(quota.refills_in(), None);
+    }
 }
 
 #[cfg(test)]

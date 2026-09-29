@@ -366,12 +366,16 @@ fn a_bare_command_line_reads_like_any_other_verb_missing_its_second_word() {
     }
 
     // The verbs are named, but not the one the shell calls and people do not.
-    assert!(
-        bare.contains("status, watch, list"),
-        "got:
+    // Checked one at a time rather than as a run of text: asserting the order
+    // meant every new verb broke a test that had nothing to do with it.
+    for verb in ["status", "watch", "list", "config", "hooks"] {
+        assert!(
+            bare.contains(verb),
+            "`{verb}` should be offered, got:
 {}",
-        indent(&bare)
-    );
+            indent(&bare)
+        );
+    }
     assert!(
         !bare.contains("complete,") && !bare.ends_with("complete"),
         "the hidden completer should not be offered, got:

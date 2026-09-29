@@ -8,7 +8,7 @@ mod render;
 mod stub;
 mod term;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -25,7 +25,7 @@ use deplyd_core::settings::Settings;
 use deplyd_core::targets::{self, TargetSet};
 use deplyd_core::verdict;
 
-use cli::{Change, Cli, Command, ConfigAction, ListWhat};
+use cli::{Change, Cli, Command, ConfigAction, HookAction, ListWhat, StartupAction, WatchAction};
 use render::Output;
 use term::WebBase;
 
@@ -48,12 +48,44 @@ fn main() -> ExitCode {
 
     let command = parsed.command;
     let options = command.options();
+
+    // The copy doing the watching, before it can stop for any reason. A record
+    // that says running after its process has left is worse than no record:
+    // `list watchers` shows it, `watch stop` waits on it, and nothing comes.
+    if let Command::Watch {
+        watcher_id: Some(id),
+        ..
+    } = &command
+    {
+        let id = id.clone();
+        render::before_leaving(move || {
+            // Read again rather than kept: what is on disk by now is what
+            // other processes have been told, and it is that copy being closed.
+            if let Ok(mut record) = deplyd_core::watchers::find(&id) {
+                record.mark_stopped();
+            }
+        });
+    }
     let output = Output { json: options.json };
 
     match &command {
         Command::Check => {
             show_self_check();
             return ExitCode::SUCCESS;
+        }
+        Command::Quota => {
+            return show_quota();
+        }
+        // What the machine calls at login, before anything else: there is no
+        // terminal to talk to and no repository to open.
+        Command::Watch {
+            action:
+                Some(WatchAction::Startup {
+                    action: Some(StartupAction::Run { id }),
+                }),
+            ..
+        } => {
+            return run_at_startup(id.as_deref());
         }
         Command::Uninstall => {
             show_uninstall();
@@ -73,9 +105,47 @@ fn main() -> ExitCode {
 
     let mut settings = Settings::load();
 
+    if let Command::Watch {
+        action: Some(WatchAction::Startup { action }),
+        ..
+    } = &command
+        && !matches!(action, Some(StartupAction::Run { .. }))
+    {
+        startup(action.as_ref());
+        return ExitCode::SUCCESS;
+    }
+
+    if let Command::Watch {
+        action: Some(action @ (WatchAction::Stop { .. } | WatchAction::Log { .. })),
+        ..
+    } = &command
+    {
+        watchers(action);
+        return ExitCode::SUCCESS;
+    }
+
+    if let Command::Hooks { action } = &command {
+        hooks(&mut settings, action);
+        return ExitCode::SUCCESS;
+    }
+
     if let Command::Remember { what, value } = &command {
         remember(&mut settings, what.as_deref(), value.as_deref());
         return ExitCode::SUCCESS;
+    }
+
+    if let Command::List { what, .. } = &command {
+        match what {
+            ListWhat::Watchers => {
+                render::watchers(&deplyd_core::watchers::all());
+                return ExitCode::SUCCESS;
+            }
+            ListWhat::Hooks => {
+                render::hooks(&settings.hooks);
+                return ExitCode::SUCCESS;
+            }
+            _ => {}
+        }
     }
 
     let repo = open_repo(&options.repo_path, &settings);
@@ -153,9 +223,11 @@ fn main() -> ExitCode {
     // credential is.
     let verb = command.name();
     let asked = match &command {
-        Command::Status { change, .. } | Command::Watch { change, .. } => {
-            change.as_ref().map(|change| Asked::read(change, verb))
-        }
+        Command::Status { change, .. } => change.as_ref().map(|change| Asked::read(change, verb)),
+        Command::Watch { action, .. } => action
+            .as_ref()
+            .and_then(WatchAction::change)
+            .map(|change| Asked::read(&change, verb)),
         _ => None,
     };
 
@@ -173,6 +245,24 @@ fn main() -> ExitCode {
         _ => None,
     };
 
+    // Before GitHub is opened at all. The child does the looking, so a parent
+    // that took the first look would spend the allowance twice over for it.
+    // watcher_id is set only on the copy that was started for this purpose, so
+    // it is what tells parent from child. Without it the child sees the same
+    // flags the parent did, backgrounds itself again, and deplyd spawns until
+    // something else stops it.
+    if let (true, Command::Watch { at_startup, .. }, Some(plan)) =
+        (cli::should_detach(&command), &command, &watch_plan)
+    {
+        // Registered first. A watch that cannot be written into the startup
+        // folder should say so before one is left running that will not come
+        // back, which is the failure nobody notices until the next reboot.
+        if *at_startup && let Err(why) = register_at_startup(&repo) {
+            render::stop(&why, &["Nothing was started.".into()]);
+        }
+        return start_in_background(&context, &repo, plan);
+    }
+
     let (github, slug, web) = open_github(&repo);
     let mut cache = deplyd_core::cache::Cache::open(&slug.0, &slug.1);
 
@@ -181,11 +271,62 @@ fn main() -> ExitCode {
         context.environment_phrase()
     ));
 
-    let runs = collect_runs(&context, &github, &output);
-    let mut targets = targets::build(&context, &repo, &github, &runs, &mut cache, |line| {
-        output.note(line)
-    });
-    cache.save();
+    // The first look, retried rather than abandoned when it is a watcher doing
+    // the looking.
+    //
+    // A refused request answers empty, so every question after it would be
+    // answered from nothing: no targets found, no changes live. Both read as
+    // facts about the repository and neither is one, which is why this sits
+    // before the empty check and before anything is reported.
+    //
+    // Once watching, being refused is something to wait out - the loop already
+    // does exactly that further down. Exiting here instead would kill a watcher
+    // that started at boot into a spent allowance, and nothing would bring it
+    // back until the machine restarted.
+    // Both started before the first look, because the first look can itself be
+    // refused and waited out. A deadline created afterwards would not count that
+    // wait, and a record loaded afterwards would leave it unstamped.
+    let running_as = match &command {
+        Command::Watch { watcher_id, .. } => watcher_id.clone(),
+        _ => None,
+    };
+    let mut record = running_as
+        .as_deref()
+        .and_then(|id| deplyd_core::watchers::find(id).ok());
+    let deadline = watch_plan
+        .as_ref()
+        .and_then(|plan| plan.length)
+        .map(|length| Instant::now() + length);
+
+    let (runs, mut targets) = loop {
+        let runs = collect_runs(&context, &github, &output);
+        let targets = targets::build(&context, &repo, &github, &runs, &mut cache, |line| {
+            output.note(line)
+        });
+        cache.save();
+
+        let Some(wait) = github.rate_limited() else {
+            break (runs, targets);
+        };
+
+        if watch_plan.is_none() {
+            stop_for_spent_allowance(wait);
+        }
+
+        // The same floor the loop uses. Without it a reset already almost due
+        // gives a one second wait, and this turns into a tight retry against
+        // the very thing that just refused us.
+        let wait = wait.max(Duration::from_secs(60));
+        if !options.json {
+            render::watch_paused(wait);
+        }
+        // Measured against the deadline the whole watch shares, so waiting out
+        // a refusal spends the time it was given rather than adding to it.
+        if let Some(reason) = wait_without_going_quiet(wait, &mut record, deadline) {
+            return finished(record.as_mut(), options.json, reason);
+        }
+        github.forget();
+    };
 
     if targets.targets.is_empty() {
         stop_for_no_targets(&context, &targets, runs.len());
@@ -209,6 +350,8 @@ fn main() -> ExitCode {
             depth,
             (runs, targets),
             plan,
+            record,
+            deadline,
         );
     }
 
@@ -611,13 +754,19 @@ fn watch_loop(
     depth: usize,
     first: (Vec<deplyd_core::github::Run>, TargetSet),
     plan: WatchPlan,
+    // Set when this is the detached copy, so it can stamp its own record and
+    // notice when it has been asked to stop.
+    mut record: Option<deplyd_core::watchers::Watcher>,
+    // Started before the first look, so time spent waiting out a refusal before
+    // the loop began is already counted against it.
+    deadline: Option<Instant>,
 ) -> ExitCode {
     let WatchPlan {
         until,
         every,
         length,
     } = plan;
-    let deadline = length.map(|length| Instant::now() + length);
+    let _ = length;
 
     // Progress chatter belongs to the first look only; repeating it every minute
     // would bury the events underneath it.
@@ -650,7 +799,9 @@ fn watch_loop(
             if !options.json {
                 render::watch_paused(wait);
             }
-            std::thread::sleep(wait);
+            if let Some(reason) = wait_without_going_quiet(wait, &mut record, deadline) {
+                return finished(record.as_mut(), options.json, reason);
+            }
             github.forget();
             let _ = repo.fetch_again();
             runs = collect_runs(context, github, &quiet);
@@ -665,10 +816,47 @@ fn watch_loop(
             Some(before) => {
                 for event in deplyd_core::watch::changes(before, &snapshot) {
                     render::watch_event(&event, options.json, web);
+
+                    // After the event is printed, so what deplyd saw is on
+                    // screen whatever the hooks then do with it. A hook that
+                    // fails is said and the watch carries on: it is a
+                    // notification, not a step the deploy depends on.
+                    if !context.settings.hooks.is_empty() {
+                        let payload = serde_json::to_string(&event).unwrap_or_default();
+                        let mut failed = Vec::new();
+
+                        for path in &context.settings.hooks {
+                            let (path, outcome) = run_one_hook(path, &payload);
+                            if outcome.is_err() {
+                                failed.push((path, outcome));
+                            }
+                            // Between hooks, not after all of them. Each may
+                            // take its full timeout, and a watcher that has not
+                            // stamped for long enough reads as lost - at which
+                            // point `watchers stop` refuses it while it is still
+                            // very much running.
+                            if let Some(watcher) = record.as_mut() {
+                                watcher.beat();
+                            }
+                        }
+
+                        if !failed.is_empty() && !options.json {
+                            render::hook_results(&failed, false);
+                        }
+                    }
                 }
             }
         }
         previous = Some(snapshot);
+
+        // Stamped every look, which is what tells `watchers` this one is still
+        // going - and the same look picks up whatever another process wrote to
+        // the record, which is how being asked to stop arrives.
+        if let Some(watcher) = record.as_mut()
+            && watcher.beat()
+        {
+            return finished(record.as_mut(), options.json, "asked to stop");
+        }
 
         // Asked after the events, so the run that carried a change is reported
         // before the watcher exits on it.
@@ -677,14 +865,14 @@ fn watch_loop(
             if !options.json {
                 render::watch_closing(reason);
             }
+            if let Some(watcher) = record.as_mut() {
+                watcher.mark_stopped();
+            }
             return code;
         }
         let out_of_time = || deadline.is_some_and(|end| Instant::now() >= end);
         if out_of_time() {
-            if !options.json {
-                render::watch_closing("time is up");
-            }
-            return ExitCode::SUCCESS;
+            return finished(record.as_mut(), options.json, "time is up");
         }
 
         // Never sleep past the deadline: --for 30s with --every 5m should stop at
@@ -697,10 +885,7 @@ fn watch_loop(
 
         // Checked again rather than falling into a look nobody will read.
         if out_of_time() {
-            if !options.json {
-                render::watch_closing("time is up");
-            }
-            return ExitCode::SUCCESS;
+            return finished(record.as_mut(), options.json, "time is up");
         }
 
         // Everything memoised is from the last look, and a watcher that trusted
@@ -711,6 +896,61 @@ fn watch_loop(
         targets = targets::build(context, repo, github, &runs, cache, |_| {});
         cache.save();
     }
+}
+
+/// Waits, without going quiet.
+///
+/// A rate limit can pause a watcher for the best part of an hour. Sleeping that
+/// off in one go stops the heartbeat, and a record that has not been stamped for
+/// three intervals reads as `Lost` - at which point `watchers stop` refuses it
+/// as "not running" while the process is very much alive and unstoppable.
+///
+/// So the wait is taken in slices: stamped each time, and still listening for a
+/// stop or a deadline it was given.
+fn wait_without_going_quiet(
+    wait: Duration,
+    record: &mut Option<deplyd_core::watchers::Watcher>,
+    deadline: Option<Instant>,
+) -> Option<&'static str> {
+    const SLICE: Duration = Duration::from_secs(5);
+
+    let until = Instant::now() + wait;
+    loop {
+        if deadline.is_some_and(|end| Instant::now() >= end) {
+            return Some("time is up");
+        }
+        if let Some(watcher) = record.as_mut()
+            && watcher.beat()
+        {
+            return Some("asked to stop");
+        }
+
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        std::thread::sleep(SLICE.min(left));
+    }
+}
+
+/// The one way out of the loop, so a record cannot be left saying "running"
+/// for a watcher that finished perfectly well.
+///
+/// Without this, ending on `--for` leaves the record untouched, and three
+/// intervals later `watchers` calls it "went quiet" - which is what it says for
+/// a crash. A clean end should not look like a failure.
+fn finished(
+    record: Option<&mut deplyd_core::watchers::Watcher>,
+    json: bool,
+    reason: &str,
+) -> ExitCode {
+    if !json {
+        render::watch_closing(reason);
+    }
+    if let Some(watcher) = record {
+        watcher.mark_stopped();
+    }
+    ExitCode::SUCCESS
 }
 
 /// Whether the thing being waited for has happened, and what to say about it.
@@ -1219,6 +1459,374 @@ fn key(style: anstyle::Style, word: &str, meaning: &str) {
     );
 }
 
+/// Writes the settings, or says why it could not.
+///
+/// Swallowed, this loses a hook silently: the list on screen would be the one
+/// that was wanted and the one on disk the one that will actually run.
+fn save_settings(settings: &Settings) {
+    if let Err(error) = settings.save() {
+        render::stop(
+            &format!("Could not write the settings: {error}"),
+            &["Nothing was changed.".into()],
+        );
+    }
+}
+
+/// `startup`: the watches that come back when the machine does.
+fn startup(action: Option<&StartupAction>) {
+    use deplyd_core::startup;
+
+    let named = |id: &Option<String>| -> String {
+        match id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
+            Some(id) => id.to_string(),
+            None => render::stop("Which one?", &["deplyd watch startup lists them.".into()]),
+        }
+    };
+
+    match action {
+        None => render::startup_entries(&startup::all(), startup::os_location().ok()),
+        Some(StartupAction::Disable { id }) => match startup::set_enabled(&named(id), false) {
+            Ok(entry) => render::startup_changed(&entry),
+            Err(why) => render::stop(&why, &["deplyd watch startup lists them.".into()]),
+        },
+        Some(StartupAction::Enable { id }) => match startup::set_enabled(&named(id), true) {
+            Ok(entry) => render::startup_changed(&entry),
+            Err(why) => render::stop(&why, &["deplyd watch startup lists them.".into()]),
+        },
+        Some(StartupAction::Run { .. }) => unreachable!("handled before the repo is opened"),
+    }
+}
+
+/// Writes this watch into wherever the machine looks at login.
+///
+/// The arguments are this run's own, minus the flag that asked for it, so what
+/// comes back after a reboot is the watch that was asked for.
+fn register_at_startup(repo: &Repo) -> Result<(), String> {
+    use deplyd_core::startup::{self, Entry};
+
+    let exe = std::env::current_exe()
+        .map_err(|error| format!("Could not find deplyd itself: {error}"))?
+        .display()
+        .to_string();
+
+    let given: Vec<String> = std::env::args().skip(1).collect();
+    let root = repo.root().display().to_string();
+    let args = cli::args_for_startup(&given, &root);
+
+    // Asking twice should not mean two of them at every boot.
+    if let Some(mut existing) = startup::already_registered(&root, &args) {
+        if !existing.enabled {
+            existing = startup::set_enabled(&existing.id, true)?;
+        }
+        render::startup_already(&existing);
+        return Ok(());
+    }
+
+    let id = startup::new_id(std::process::id());
+    let written = startup::install(&id, &exe)?;
+    let entry = Entry {
+        id: id.clone(),
+        args,
+        repo: repo.root().display().to_string(),
+        enabled: true,
+        created_at: deplyd_core::watchers::now(),
+        os_file: written.display().to_string(),
+    };
+    entry
+        .save()
+        .map_err(|error| format!("Wrote {}, but not its record: {error}", written.display()))?;
+
+    render::startup_registered(&entry);
+    Ok(())
+}
+
+/// What the machine calls at login. Starts the watch, or does nothing if it has
+/// since been turned off - the file it was told to run stays either way.
+fn run_at_startup(id: Option<&str>) -> ExitCode {
+    use deplyd_core::startup;
+
+    let Some(id) = id.map(str::trim).filter(|id| !id.is_empty()) else {
+        return ExitCode::from(2);
+    };
+    let Ok(entry) = startup::find(id) else {
+        return ExitCode::from(2);
+    };
+    if !entry.enabled {
+        return ExitCode::SUCCESS;
+    }
+
+    // entry.id, not the argument: `find` accepts a prefix, so `startup run abc`
+    // for entry abc123 would otherwise write into abc.log while every other
+    // command talks about abc123.
+    let log = startup::directory().join(format!("{}.log", entry.id));
+    match deplyd_core::gateway::background::respawn(&entry.args, &log) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(_) => ExitCode::FAILURE,
+    }
+}
+
+/// `watchers`: what is running in the background, and how to stop it.
+fn watchers(action: &WatchAction) {
+    use deplyd_core::watchers;
+
+    match action {
+        WatchAction::Stop { id } => {
+            let Some(id) = id.as_deref().filter(|id| !id.trim().is_empty()) else {
+                render::stop(
+                    "Which watcher?",
+                    &["deplyd list watchers lists them.".into()],
+                );
+            };
+            match watchers::request_stop(id) {
+                Ok(watcher) => render::watcher_stopping(&watcher),
+                Err(why) => render::stop(&why, &["deplyd list watchers lists them.".into()]),
+            }
+        }
+        WatchAction::Log { id } => {
+            let Some(id) = id.as_deref().filter(|id| !id.trim().is_empty()) else {
+                render::stop(
+                    "Which watcher?",
+                    &["deplyd list watchers lists them.".into()],
+                );
+            };
+            match watchers::find(id) {
+                Ok(watcher) => render::watcher_log(&watcher),
+                Err(why) => render::stop(&why, &["deplyd list watchers lists them.".into()]),
+            }
+        }
+        // Everything else `watch` can be asked is handled before this point.
+        WatchAction::Pr { .. } | WatchAction::Commit { .. } | WatchAction::Startup { .. } => {
+            unreachable!("handled earlier")
+        }
+    }
+}
+
+/// Hands the whole watch over to a detached copy of deplyd and returns.
+///
+/// The child is given the same command line with the background flag dropped
+/// and its id added, so what runs in the background is the watch that was asked
+/// for rather than a reconstruction of it.
+fn start_in_background(context: &Context, repo: &Repo, plan: &WatchPlan) -> ExitCode {
+    use deplyd_core::watchers::{self, Watcher};
+
+    let id = watchers::new_id(std::process::id());
+    let log = watchers::directory().join(format!("{id}.log"));
+
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // Both flags dropped: the child is the watcher, not another asker. Leaving
+    // --at-startup on would have it register itself all over again.
+    args.retain(|arg| !matches!(arg.as_str(), "--background" | "-B" | "--at-startup"));
+    args.push("--watcher-id".into());
+    args.push(id.clone());
+    // Pinned, so the child is not at the mercy of whatever directory it inherits.
+    if !args.iter().any(|arg| arg == "--repo-path") {
+        args.push("--repo-path".into());
+        args.push(repo.root().display().to_string());
+    }
+
+    // Written before the child exists, not after. The child looks its own record
+    // up on the way in, and a record that arrives late is a watcher that never
+    // heartbeats, never hears a stop, and cannot be listed - while the parent
+    // says it started fine.
+    let mut watcher = Watcher {
+        id: id.clone(),
+        pid: 0,
+        repo: repo.root().display().to_string(),
+        environment: context.environment.clone(),
+        author: context.author.clone().unwrap_or_default(),
+        every_secs: plan.every.as_secs(),
+        started_at: watchers::now(),
+        last_seen: watchers::now(),
+        stop_requested: false,
+        stopped_at: None,
+        log: log.display().to_string(),
+    };
+    if let Err(error) = watcher.save() {
+        render::stop(
+            &format!("Could not write its record: {error}"),
+            &[
+                "Nothing was started: a watcher nothing can list or stop is worse".into(),
+                "than no watcher at all.".into(),
+            ],
+        );
+    }
+
+    match deplyd_core::gateway::background::respawn(&args, &log) {
+        Ok(pid) => {
+            watcher.pid = pid;
+            let _ = watcher.save();
+        }
+        Err(error) => {
+            // The record exists but nothing is running, so it is closed off
+            // rather than left looking like something that went quiet.
+            watcher.mark_stopped();
+            render::stop(&error.to_string(), &[]);
+        }
+    }
+
+    render::watcher_started(&watcher);
+    ExitCode::SUCCESS
+}
+
+/// `hooks`: the scripts a watcher kicks, and the three things you do to them.
+fn hooks(settings: &mut Settings, action: &HookAction) {
+    match action {
+        HookAction::Add { path } => {
+            let full = absolute(path);
+            let shown = full.display().to_string();
+
+            if !full.is_file() {
+                render::stop(
+                    &format!("No such file: {shown}"),
+                    &["A hook is a script deplyd starts, so it has to be there first.".into()],
+                );
+            }
+            if settings.hooks.iter().any(|held| held == &shown) {
+                render::stop(
+                    &format!("Already a hook: {shown}"),
+                    &["deplyd list hooks lists them.".into()],
+                );
+            }
+
+            settings.hooks.push(shown.clone());
+            save_settings(settings);
+            render::stop_free(&format!("Added {shown}"), &settings.hooks);
+        }
+        HookAction::Remove { path } => {
+            let shown = absolute(path).display().to_string();
+            let before = settings.hooks.len();
+            // Matched on the full path, or on what the user typed, because the
+            // list prints full paths and people paste what they typed.
+            settings.hooks.retain(|held| held != &shown && held != path);
+
+            if settings.hooks.len() == before {
+                render::stop(
+                    &format!("Not a hook: {path}"),
+                    &["deplyd list hooks lists them.".into()],
+                );
+            }
+            save_settings(settings);
+            render::stop_free(&format!("Removed {shown}"), &settings.hooks);
+        }
+        HookAction::Test => {
+            if settings.hooks.is_empty() {
+                render::stop(
+                    "No hooks registered, so there is nothing to test.",
+                    &["deplyd hooks add <script>".into()],
+                );
+            }
+            let sample = deplyd_core::watch::sample_event_json();
+            render::hook_results(&run_hooks(&settings.hooks, &sample), true);
+        }
+    }
+}
+
+/// A path as the user typed it, made absolute so the list means one thing from
+/// whatever directory a watcher happens to run in.
+fn absolute(path: &str) -> PathBuf {
+    let given = PathBuf::from(path);
+    let full = if given.is_absolute() {
+        given
+    } else {
+        std::env::current_dir()
+            .map(|here| here.join(&given))
+            .unwrap_or(given)
+    };
+    // Rebuilt from its parts, so a path typed with forward slashes is not
+    // written down half one way and half the other.
+    full.components().collect()
+}
+
+/// Kicks every hook with one event, and says how each went. A hook that fails is
+/// reported and the rest still run: they are notifications, not steps in a chain.
+fn run_hooks(hooks: &[String], payload: &str) -> Vec<(String, Result<String, String>)> {
+    hooks
+        .iter()
+        .map(|path| run_one_hook(path, payload))
+        .collect()
+}
+
+/// One hook, kicked and reported on.
+fn run_one_hook(path: &str, payload: &str) -> (String, Result<String, String>) {
+    {
+        {
+            let outcome = deplyd_core::gateway::hook::run(
+                Path::new(path),
+                payload,
+                deplyd_core::gateway::hook::DEFAULT_TIMEOUT,
+            );
+            let told = match outcome {
+                Ok(done) if done.ok() => Ok("ok".to_string()),
+                Ok(done) => {
+                    let code = done
+                        .code
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "signal".into());
+                    Err(if done.stderr.is_empty() {
+                        format!("exit {code}")
+                    } else {
+                        format!("exit {code}: {}", done.stderr.lines().next().unwrap_or(""))
+                    })
+                }
+                Err(error) => Err(error.to_string()),
+            };
+            (path.to_string(), told)
+        }
+    }
+}
+
+/// Nothing was read, because there was nothing left to read with.
+///
+/// Said rather than worked around: retrying is what spent it, and a watcher or
+/// a shell loop that cannot tell "no" from "nothing" will keep going.
+fn stop_for_spent_allowance(wait: std::time::Duration) -> ! {
+    render::stop(
+        "GitHub's hourly allowance is spent, so nothing was read.",
+        &[
+            format!("It refills in {}.", render::spell_duration(wait)),
+            "deplyd quota shows what is left, and costs nothing to ask.".into(),
+        ],
+    )
+}
+
+/// `quota`: how much of the hourly allowance is left.
+///
+/// Worth its own verb because every other verb spends it, and a watcher spends
+/// it steadily. Asking costs nothing: GitHub does not count this route.
+fn show_quota() -> ExitCode {
+    // No repository asked for. The allowance belongs to the account, not to a
+    // repo, and needing to stand in one to ask how much is left would be a
+    // strange thing to insist on - not least when the reason you are asking is
+    // that something else already refused.
+    let github = match stub::FileTransport::from_environment() {
+        Some(files) => GitHub::new(Box::new(files), DEPLYD_OWNER.into(), DEPLYD_NAME.into()),
+        None => {
+            let found = match credential::find() {
+                Ok(found) => found,
+                Err(error) => render::stop(
+                    &error.to_string(),
+                    &[gh_install_hint().into(), "gh auth login".into()],
+                ),
+            };
+            match ReadOnlyHttp::new(found.token, GITHUB_API.to_string()) {
+                Ok(http) => GitHub::new(Box::new(http), DEPLYD_OWNER.into(), DEPLYD_NAME.into()),
+                Err(error) => render::stop(&error.to_string(), &[]),
+            }
+        }
+    };
+
+    match github.quota() {
+        Ok(quota) => {
+            render::quota(&quota);
+            ExitCode::SUCCESS
+        }
+        Err(error) => render::stop(
+            &format!("Could not read the allowance: {error}"),
+            &["GitHub states it on every answer, including a refusal.".into()],
+        ),
+    }
+}
+
 /// `check`: what the gateway allows, and whether this binary still obeys it.
 /// A signpost, not a deed. deplyd never deletes - `check` says so and the build
 /// guard enforces it - so removing it stays the installer's job, and this prints
@@ -1323,12 +1931,50 @@ fn show_self_check() {
 
     println!();
     println!(
-        "  writes on disk      only inside {}",
+        "  writes on disk      inside {}",
         deplyd_core::settings::config_directory().display()
     );
-    println!("                      remembered defaults, and what deplyd config init scaffolds");
+    println!(
+        "                      defaults, watcher records and logs, and what config init writes"
+    );
+
+    // Named separately because it is the one write that lands outside deplyd's
+    // own directory. A check that says "only inside" while a file sits in the
+    // startup folder would be telling a comfortable lie.
+    let booted = deplyd_core::startup::all();
+    match deplyd_core::startup::os_location() {
+        Ok(where_) if !booted.is_empty() => {
+            println!(
+                "  and at startup      {} entry in {}",
+                booted.len(),
+                where_.display()
+            );
+            println!("                      written when you asked with --at-startup");
+        }
+        Ok(where_) => {
+            println!("  and at startup      nothing. --at-startup would write one into");
+            println!("                      {}", where_.display());
+        }
+        Err(_) => {}
+    }
     println!("  the one git write   fetch, which updates your own remote-tracking refs");
     println!("                      nothing is sent, and a fetch cannot change a remote");
+
+    // Deplyd still only reads. But it will start these, and what they do is not
+    // deplyd's to promise, so a check that reports what it does has to say so.
+    let hooks = Settings::load().hooks;
+    if hooks.is_empty() {
+        println!("  hooks               none registered, so nothing else is ever started");
+    } else {
+        println!(
+            "  hooks               {} registered, started on what a watcher sees",
+            hooks.len()
+        );
+        for path in &hooks {
+            println!("                      {path}");
+        }
+        println!("                      deplyd starts these; what they do is yours");
+    }
     println!();
     println!(
         "{}  These ran just now, against the code compiled into this binary,{:#}",
