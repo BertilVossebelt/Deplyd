@@ -2,9 +2,11 @@
 //!
 //! Two of deplyd's own rules shape this more than anything else.
 //!
-//! It never deletes, so stopping a watcher does not remove its record - the
-//! record is marked stopped and stays. `watchers` shows the running ones;
-//! nothing is ever quietly gone.
+//! Stopping a watcher does not remove its record: it is marked stopped and
+//! stays, so `watch log` still answers afterwards. What does go, and the only
+//! thing deplyd removes anywhere, is a finished record once it is a month old
+//! and not among the newest ten - see [`tidy`]. Without that a machine that
+//! watches for a year has hundreds of records nobody will look at again.
 //!
 //! It does not kill processes either. Stopping is a request written into the
 //! file, which the watcher reads on its next look and then exits. That costs up
@@ -21,6 +23,13 @@ use serde::{Deserialize, Serialize};
 /// Missed heartbeats before a watcher is presumed gone. Three intervals is long
 /// enough to survive a slow look and short enough to notice a crash.
 const MISSED_BEFORE_GONE: u32 = 3;
+
+/// Finished records kept however old they are, so the last few logs stay
+/// readable.
+pub const KEEP_FINISHED: usize = 10;
+
+/// How long a finished record is kept past those, in seconds. Thirty days.
+pub const KEEP_FOR: i64 = 30 * 24 * 60 * 60;
 
 /// The shortest grace, whatever the interval.
 ///
@@ -120,11 +129,50 @@ impl Watcher {
         self.stop_requested
     }
 
-    /// Marks it finished. The record stays; deplyd does not delete.
+    /// Marks it finished. The record stays, until `tidy` decides otherwise.
     pub fn mark_stopped(&mut self) {
         self.stopped_at = Some(now());
         let _ = self.save();
     }
+
+    /// When it finished, as far as the record can say: when it stopped, or the
+    /// last heartbeat of one that went quiet.
+    pub fn finished_at(&self) -> i64 {
+        self.stopped_at.unwrap_or(self.last_seen)
+    }
+}
+
+/// The records that have served their purpose: finished, not among the newest
+/// `KEEP_FINISHED` finished ones, and finished more than `KEEP_FOR` ago. A live
+/// one is never named, however old its file. Pure, so the rule can be tested
+/// without a config directory.
+pub fn stale(held: &[Watcher], at: i64) -> Vec<&Watcher> {
+    let mut finished: Vec<&Watcher> = held.iter().filter(|w| !w.is_live()).collect();
+    finished.sort_by_key(|w| std::cmp::Reverse(w.finished_at()));
+    finished
+        .into_iter()
+        .skip(KEEP_FINISHED)
+        .filter(|w| at.saturating_sub(w.finished_at()) > KEEP_FOR)
+        .collect()
+}
+
+/// Removes the stale records and their logs, and says how many records went.
+///
+/// Housekeeping, so a file that will not go is skipped rather than fatal. The
+/// log is named from the id rather than read from the record, so what is
+/// removed is always beside the record and never wherever the record says.
+pub fn tidy() -> usize {
+    let directory = directory();
+    let held = all();
+    let mut removed = 0;
+    for watcher in stale(&held, now()) {
+        let log = directory.join(format!("{}.log", watcher.id));
+        let _ = crate::gateway::tidy::remove_watcher_file(&directory, &log);
+        if crate::gateway::tidy::remove_watcher_file(&directory, &watcher.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 pub fn now() -> i64 {

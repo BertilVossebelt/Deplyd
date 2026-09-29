@@ -441,6 +441,15 @@ try {
     $block = @(& (Join-Path $installDir 'deplyd.exe') completions powershell)
     Set-Content -LiteralPath $profilePath -Value ($kept + $block) -Encoding utf8
 
+    # And into this session. The profile was read when this terminal opened, so
+    # an update run from it leaves the old completer in place until the next
+    # one: the verbs added since then complete as files. Piped to iex, as the
+    # documented line does, this runs in the session's own scope, which is
+    # where the profile would have put it. Run as a file it lands in a scope
+    # that ends with the file, and the next terminal, which reads the profile,
+    # is what fixes that.
+    . ([scriptblock]::Create(($block -join "`n"))) 2>$null
+
     Write-Host "  completion added to $profilePath" -ForegroundColor DarkGray
 } catch {
     Write-Host '  completion could not be set up - run:' -ForegroundColor Yellow
@@ -450,6 +459,6 @@ try {
 # --- done -------------------------------------------------------------------
 
 Write-Host ''
-Write-Host 'Done. Open a new terminal, then from inside any repo:' -ForegroundColor Green
+Write-Host 'Done. From inside any repo:' -ForegroundColor Green
 Write-Host '  dp status'
 Write-Host ''

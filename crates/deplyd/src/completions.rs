@@ -263,7 +263,7 @@ Register-ArgumentCompleter -Native -CommandName {names} -ScriptBlock {{
                 }}
         }}
         switch ($subcommand) {{
-            'remember'    {{ return script:DeplydResults @('author', 'environment', 'repo') $word }}
+            'remember'    {{ return script:DeplydResults @('author', 'environment', 'repo', 'depth', 'every') $word }}
             'completions' {{ return script:DeplydResults @({shells}) $word }}
         }}
     }}

@@ -137,6 +137,9 @@ fn main() -> ExitCode {
     if let Command::List { what, .. } = &command {
         match what {
             ListWhat::Watchers => {
+                // Housekeeping first, so what the list counts as hidden is
+                // what is actually still there.
+                deplyd_core::watchers::tidy();
                 render::watchers(&deplyd_core::watchers::all());
                 return ExitCode::SUCCESS;
             }
@@ -1609,6 +1612,10 @@ fn watchers(action: &WatchAction) {
 fn start_in_background(context: &Context, repo: &Repo, plan: &WatchPlan) -> ExitCode {
     use deplyd_core::watchers::{self, Watcher};
 
+    // One in, the stalest out: the directory stays bounded for someone who
+    // starts watchers and never lists them.
+    watchers::tidy();
+
     let id = watchers::new_id(std::process::id());
     let log = watchers::directory().join(format!("{id}.log"));
 
@@ -1828,9 +1835,9 @@ fn show_quota() -> ExitCode {
 }
 
 /// `check`: what the gateway allows, and whether this binary still obeys it.
-/// A signpost, not a deed. deplyd never deletes - `check` says so and the build
-/// guard enforces it - so removing it stays the installer's job, and this prints
-/// the line that does it.
+/// A signpost, not a deed. deplyd removes nothing but its own finished watcher
+/// records - the build guard enforces it - so removing it stays the installer's
+/// job, and this prints the line that does it.
 /// The line that installs the newest release. Installing over an existing copy is
 /// the update, so there is nothing separate to print.
 fn install_line() -> String {

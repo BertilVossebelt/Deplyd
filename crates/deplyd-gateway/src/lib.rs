@@ -7,6 +7,9 @@
 //!
 //! [`selfcheck`] runs the refusal paths compiled into the binary, since a binary
 //! cannot audit the source it came from.
+//!
+//! [`tidy`] is the one place a file is removed, and it takes only a finished
+//! watcher's record or log from deplyd's own directory.
 
 pub mod background;
 pub mod credential;
@@ -14,6 +17,7 @@ pub mod git;
 pub mod hook;
 pub mod http;
 pub mod selfcheck;
+pub mod tidy;
 
 use std::fmt;
 
