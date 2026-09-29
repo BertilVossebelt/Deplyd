@@ -5,7 +5,7 @@
 //! systemd user unit on Linux. No installer, no service manager to talk to, and
 //! nothing that needs privileges.
 //!
-//! What it writes there runs `deplyd startup run <id>`, not the watch itself.
+//! What it writes there runs `deplyd watch startup run <id>`, not the watch itself.
 //! The indirection is what makes turning one off possible: deplyd never deletes,
 //! so the file stays where it is, and the record it consults decides whether
 //! anything happens. Turning one off is a line in a file rather than a deletion

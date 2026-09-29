@@ -137,7 +137,7 @@ pub enum Command {
         #[arg(long = "every", global = true, value_name = "DURATION")]
         every: Option<String>,
 
-        /// Let go of the terminal and keep watching. deplyd watchers lists them
+        /// Let go of the terminal and keep watching. deplyd list watchers lists them
         #[arg(short = 'B', long = "background", global = true)]
         background: bool,
 
@@ -317,7 +317,7 @@ pub enum HookAction {
     },
     /// Stop kicking a script. It is not deleted.
     Remove {
-        /// Path as `deplyd hooks` lists it
+        /// Path as `deplyd list hooks` lists it
         path: String,
     },
     /// Run every hook once with a made-up event, to see what they do
@@ -502,7 +502,7 @@ pub fn should_detach(command: &Command) -> bool {
 ///
 /// `--at-startup` goes, or every boot registers another one. `--background`
 /// has to be there, or what boot starts is a plain watch: no record, nothing
-/// in `deplyd watchers`, and no way to stop it short of finding the process.
+/// in `deplyd list watchers`, and no way to stop it short of finding the process.
 /// The repo is pinned because a machine starting up is in no directory in
 /// particular.
 pub fn args_for_startup(given: &[String], repo_root: &str) -> Vec<String> {

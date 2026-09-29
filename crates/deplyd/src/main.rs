@@ -1479,7 +1479,7 @@ fn startup(action: Option<&StartupAction>) {
     let named = |id: &Option<String>| -> String {
         match id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
             Some(id) => id.to_string(),
-            None => render::stop("Which one?", &["deplyd startup lists them.".into()]),
+            None => render::stop("Which one?", &["deplyd watch startup lists them.".into()]),
         }
     };
 
@@ -1487,11 +1487,11 @@ fn startup(action: Option<&StartupAction>) {
         None => render::startup_entries(&startup::all(), startup::os_location().ok()),
         Some(StartupAction::Disable { id }) => match startup::set_enabled(&named(id), false) {
             Ok(entry) => render::startup_changed(&entry),
-            Err(why) => render::stop(&why, &["deplyd startup lists them.".into()]),
+            Err(why) => render::stop(&why, &["deplyd watch startup lists them.".into()]),
         },
         Some(StartupAction::Enable { id }) => match startup::set_enabled(&named(id), true) {
             Ok(entry) => render::startup_changed(&entry),
-            Err(why) => render::stop(&why, &["deplyd startup lists them.".into()]),
+            Err(why) => render::stop(&why, &["deplyd watch startup lists them.".into()]),
         },
         Some(StartupAction::Run { .. }) => unreachable!("handled before the repo is opened"),
     }
@@ -1684,7 +1684,7 @@ fn hooks(settings: &mut Settings, action: &HookAction) {
             if settings.hooks.iter().any(|held| held == &shown) {
                 render::stop(
                     &format!("Already a hook: {shown}"),
-                    &["deplyd hooks lists them.".into()],
+                    &["deplyd list hooks lists them.".into()],
                 );
             }
 
@@ -1702,7 +1702,7 @@ fn hooks(settings: &mut Settings, action: &HookAction) {
             if settings.hooks.len() == before {
                 render::stop(
                     &format!("Not a hook: {path}"),
-                    &["deplyd hooks lists them.".into()],
+                    &["deplyd list hooks lists them.".into()],
                 );
             }
             save_settings(settings);

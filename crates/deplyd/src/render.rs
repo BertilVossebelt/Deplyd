@@ -1133,7 +1133,7 @@ pub fn watchers(held: &[deplyd_core::watchers::Watcher]) {
             deplyd_core::watchers::directory().display()
         );
     }
-    println!("{DIM}deplyd watchers stop <id>, deplyd watchers log <id>{DIM:#}");
+    println!("{DIM}deplyd watch stop <id>, deplyd watch log <id>{DIM:#}");
     println!();
 }
 
@@ -1150,9 +1150,9 @@ pub fn watcher_started(watcher: &deplyd_core::watchers::Watcher) {
     );
     println!("  {DIM}saying what it sees into {}{DIM:#}", watcher.log);
     println!();
-    println!("  {OK}deplyd watchers{OK:#}{DIM}            what is running{DIM:#}");
+    println!("  {OK}deplyd list watchers{OK:#}{DIM}            what is running{DIM:#}");
     println!(
-        "  {OK}deplyd watchers stop {}{OK:#}{DIM}  when you have had enough{DIM:#}",
+        "  {OK}deplyd watch stop {}{OK:#}{DIM}  when you have had enough{DIM:#}",
         watcher.id
     );
     println!();
@@ -1233,7 +1233,7 @@ pub fn startup_entries(
     if let Some(location) = location {
         println!("{DIM}This machine looks in {}{DIM:#}", location.display());
     }
-    println!("{DIM}deplyd startup disable <id> stops one without deleting anything.{DIM:#}");
+    println!("{DIM}deplyd watch startup disable <id> stops one without deleting anything.{DIM:#}");
     println!();
 }
 
@@ -1255,7 +1255,7 @@ pub fn startup_already(entry: &deplyd_core::startup::Entry) {
     println!("{OK}Already starts at boot{OK:#}  {DIM}{}{DIM:#}", entry.id);
     println!();
     println!("  {DIM}{}{DIM:#}", entry.os_file);
-    println!("  {DIM}Nothing new was written; deplyd startup lists them.{DIM:#}");
+    println!("  {DIM}Nothing new was written; deplyd watch startup lists them.{DIM:#}");
     println!();
 }
 
