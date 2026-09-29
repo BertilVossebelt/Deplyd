@@ -8,8 +8,10 @@
 //! [`selfcheck`] runs the refusal paths compiled into the binary, since a binary
 //! cannot audit the source it came from.
 
+pub mod background;
 pub mod credential;
 pub mod git;
+pub mod hook;
 pub mod http;
 pub mod selfcheck;
 

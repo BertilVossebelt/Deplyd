@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use super::Denied;
 
-/// Every GitHub request deplyd makes. All six are GET, and no variant could be
-/// anything else.
+/// Every GitHub request deplyd makes. All of them are GET, and no variant could
+/// be anything else.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     /// Recent runs of one workflow file.
@@ -112,6 +112,52 @@ impl std::error::Error for HttpError {}
 /// else. A trait so the suite can answer from canned documents.
 pub trait Transport: Send + Sync {
     fn get(&self, route: &Route, owner: &str, repo: &str) -> Result<String, HttpError>;
+
+    /// The least of the hourly allowance any answer has reported left.
+    ///
+    /// Three things make this a floor rather than a figure.
+    ///
+    /// The `/rate_limit` endpoint reports a window of its own - against a `gh`
+    /// token it answers 5000 of 5000 used 0 while the headers on the same
+    /// exchange count down properly - so the headers are the source.
+    ///
+    /// The headers themselves disagree by route. `repos/{owner}/{repo}` and
+    /// `actions/runs/{id}/jobs` count together; `releases/latest` and
+    /// `actions/workflows/{file}/runs` count separately, with a window that
+    /// started at a different time. Both say `core`. deplyd spends from both,
+    /// so the lower of what it has seen is the one worth acting on.
+    ///
+    /// And the allowance is not deplyd's: `gh`, another watcher, anything else
+    /// on the same token spends it too. Only a number GitHub states can see
+    /// that, which is why deplyd does not count its own requests instead.
+    fn allowance(&self) -> Option<Allowance> {
+        None
+    }
+}
+
+/// What is left of the hourly allowance, as a response header stated it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Allowance {
+    pub limit: u32,
+    pub remaining: u32,
+    /// Unix time at which it refills.
+    pub reset: i64,
+}
+
+/// Reads the three headers GitHub puts on every answer.
+fn stated_allowance(headers: &reqwest::header::HeaderMap) -> Option<Allowance> {
+    let number = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|found| found.to_str().ok())
+            .map(str::trim)
+            .and_then(|text| text.parse::<i64>().ok())
+    };
+    Some(Allowance {
+        limit: number("x-ratelimit-limit")?.try_into().ok()?,
+        remaining: number("x-ratelimit-remaining")?.try_into().ok()?,
+        reset: number("x-ratelimit-reset")?,
+    })
 }
 
 /// A client that can only read: the inner client is private and `get` is the only
@@ -150,9 +196,16 @@ pub struct ReadOnlyHttp {
     client: reqwest::blocking::Client,
     token: String,
     api_base: String,
+    /// The last thing GitHub said about the allowance, kept so asking costs
+    /// nothing beyond the request that was being made anyway.
+    stated: std::sync::Mutex<Option<Allowance>>,
 }
 
 impl Transport for ReadOnlyHttp {
+    fn allowance(&self) -> Option<Allowance> {
+        self.stated.lock().ok().and_then(|held| *held)
+    }
+
     fn get(&self, route: &Route, owner: &str, repo: &str) -> Result<String, HttpError> {
         ReadOnlyHttp::get(self, route, owner, repo)
     }
@@ -177,6 +230,7 @@ impl ReadOnlyHttp {
             client,
             token,
             api_base,
+            stated: std::sync::Mutex::new(None),
         })
     }
 
@@ -198,6 +252,18 @@ impl ReadOnlyHttp {
             .header("X-GitHub-Api-Version", "2022-11-28")
             .send()
             .map_err(|e| HttpError::Transport(e.to_string()))?;
+
+        if let Some(stated) = stated_allowance(response.headers())
+            && let Ok(mut held) = self.stated.lock()
+        {
+            // The worse news wins. Two routes can report two windows, and
+            // over-reporting what is left is the direction that gets someone
+            // refused mid-deploy.
+            *held = Some(match *held {
+                Some(before) if before.remaining <= stated.remaining => before,
+                _ => stated,
+            });
+        }
 
         let status = response.status();
         if !status.is_success() {
@@ -249,8 +315,8 @@ pub fn routes_are_read_only() -> Result<Vec<String>, Denied> {
     let mut described = Vec::new();
     for route in &samples {
         let path = route.path("owner", "repo");
-        // A route that escaped the repository would be reading something the caller
-        // never asked about, so the shape is checked rather than assumed.
+        // A route that escaped the repository would be reading something the
+        // caller never asked about, so the shape is checked rather than assumed.
         if !path.starts_with("repos/owner/repo/") {
             return Err(Denied::new(
                 path.clone(),
