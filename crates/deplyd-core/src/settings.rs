@@ -39,6 +39,11 @@ pub struct Settings {
     pub watch_every: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth: Option<u32>,
+    /// Scripts to kick when a watcher sees something happen. Paths, run in the
+    /// order they were added. What they do is the user's business; deplyd only
+    /// starts them and hands them the event.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<String>,
 }
 
 impl Settings {

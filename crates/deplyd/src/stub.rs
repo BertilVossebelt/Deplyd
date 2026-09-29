@@ -40,6 +40,21 @@ impl FileTransport {
 
 impl Transport for FileTransport {
     fn get(&self, route: &Route, _owner: &str, _repo: &str) -> Result<String, HttpError> {
+        // A fixture can say the allowance is spent by leaving this file there.
+        // The refusal is the thing worth testing: every answer after it is empty,
+        // and empty reads exactly like "nothing is deployed".
+        let refusal = self.directory.join("rate-limited");
+        if refusal.is_file() {
+            let wait = std::fs::read_to_string(&refusal)
+                .ok()
+                .and_then(|text| text.trim().parse::<u64>().ok())
+                .unwrap_or(60);
+            return Err(HttpError::RateLimited {
+                route: Self::file_for(route),
+                wait: std::time::Duration::from_secs(wait),
+            });
+        }
+
         let name = Self::file_for(route);
         std::fs::read_to_string(self.directory.join(&name)).map_err(|_| HttpError::Status {
             code: 404,

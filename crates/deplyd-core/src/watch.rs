@@ -164,6 +164,22 @@ pub fn is_live(snapshot: &Snapshot, sha: &str) -> bool {
     snapshot.live.contains_key(sha)
 }
 
+/// One made-up event, shaped exactly like a real one, for `hooks test`.
+///
+/// A hook author needs to see the payload to write against it, and waiting for
+/// a real deploy to find out the field is called `label` is a poor way to learn.
+pub fn sample_event_json() -> String {
+    let event = Event {
+        kind: Kind::DeploySucceeded,
+        label: "API".to_string(),
+        id: "10234567890".to_string(),
+        title: "feat(billing): add invoice export endpoint".to_string(),
+        url: "https://github.com/acme/widgets/actions/runs/10234567890".to_string(),
+        author: "Ada Lovelace".to_string(),
+    };
+    serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
