@@ -181,9 +181,9 @@ pub enum Command {
         action: HookAction,
     },
 
-    /// Keep a default author, environment or repo
+    /// Keep a default author, environment, repo, depth or every
     Remember {
-        /// author, environment or repo
+        /// author, environment, repo, depth or every
         what: Option<String>,
         /// The value to remember
         value: Option<String>,

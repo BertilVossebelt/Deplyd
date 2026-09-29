@@ -74,12 +74,12 @@ what about.
 
 ```
 deplyd status                     the last deployed commit, and your changes in it
-       status pr 412              is that pull request live?
-       status commit a1b2c3d      is that commit live? any ref, HEAD included
+       status pr <number>         is that pull request live?
+       status commit <ref>        is that commit live? any ref, HEAD included
 
        watch                      deploys and changes going live, as they happen
-       watch pr 412               the same, until that pull request is live
-       watch commit a1b2c3d       the same, for any ref
+       watch pr <number>          the same, until that pull request is live
+       watch commit <ref>         the same, for any ref
        watch stop <id>            ask a background watcher to stop
        watch log <id>             what one last said
        watch startup              watches that come back when the machine does
@@ -96,8 +96,13 @@ deplyd status                     the last deployed commit, and your changes in 
 
        config                     what detection concluded about this repo
        config init                write that out as a file you can correct
-       
-       remember                   keep a default author, environment or repo
+
+       remember author <name>     what -A means when you leave it off
+       remember environment <env> the same for -E
+       remember repo <path>       the same for --repo-path
+       remember depth <n>         the same for -D
+       remember every <duration>  how often a watch looks, when not told
+
        completions                shell completion scripts
        quota                      what is left of GitHub's hourly allowance
        check                      prove it can only read
@@ -123,16 +128,6 @@ short list that applies to it.
 | `-F, --force`             | `config init`, to rewrite a file that exists                                 |
 | `-h, --help`              | anything; on `status` and `watch` it also explains the terms the report uses |
 | `-V, --version`           | which deplyd this is                                                         |
-
-Defaults can be kept:
-
-```bash
-deplyd remember author "Ada"
-deplyd remember environment staging
-deplyd remember repo /path/to/repo
-deplyd remember depth 500
-deplyd remember every 5m
-```
 
 When `--depth` stops a target early the count reads `355+`, so a ceiling is never shown
 as a total.
@@ -330,20 +325,12 @@ optional: a repo with one `deploy.yml` and none at all works.
 
 ## Read-only
 
-Deplyd never writes to GitHub and never changes your code. What it does write:
-
-- `git fetch`, which updates your own remote-tracking refs and sends nothing
-- its own files in your config directory - settings, watcher records and their
-  logs - or `.deplyd.json` in the repo if you put one there. Finished watcher
-  records are the one thing it removes: after thirty days, and never the newest ten
-- one file in this machine's startup folder, and only if you ask for it with
-  `--at-startup`. The only thing it writes outside its own directory
-
-The dangerous operations do not exist rather than being refused: every git call names
+Deplyd never writes to GitHub and never changes your code. The dangerous operations do not exist rather than being refused: every git call names
 a verb from a fixed set with no `push` and no `checkout`, and every GitHub request is
 one of a few GET routes with no method to set. Because a compiled binary cannot audit
 the source it came from, every run exercises its own refusal paths first, and a build
-whose guard has been weakened refuses to read a repository at all.
+whose guard has been weakened refuses to read a repository at all. This stops accidents, not someone determined to get around them.
+
 
 ```
 $ deplyd check
@@ -355,9 +342,14 @@ $ deplyd check
   hooks               none registered, so nothing else is ever started
 ```
 
+Deplyd does need access to some write operations for its functionality. 
+These are kept to a minimum and never change your remote repository. The exceptions are:
 
-This stops accidents, not someone determined to get around them.
-
+- `git fetch`, which updates your own remote-tracking refs. This is necessary for accurate reporting.
+- its own files in your config directory - settings, watcher records and their
+  logs, old ones tidied away - or `.deplyd.json` in the repo if you put one there
+- one file in this machine's startup folder, and only if you ask for it with
+  `--at-startup`. The only thing it writes outside its own directory
 ## Limitations
 
 - Deploys outside GitHub Actions are invisible. There is no run to read.
