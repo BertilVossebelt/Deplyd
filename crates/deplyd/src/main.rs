@@ -48,6 +48,24 @@ fn main() -> ExitCode {
 
     let command = parsed.command;
     let options = command.options();
+
+    // The copy doing the watching, before it can stop for any reason. A record
+    // that says running after its process has left is worse than no record:
+    // `list watchers` shows it, `watch stop` waits on it, and nothing comes.
+    if let Command::Watch {
+        watcher_id: Some(id),
+        ..
+    } = &command
+    {
+        let id = id.clone();
+        render::before_leaving(move || {
+            // Read again rather than kept: what is on disk by now is what
+            // other processes have been told, and it is that copy being closed.
+            if let Ok(mut record) = deplyd_core::watchers::find(&id) {
+                record.mark_stopped();
+            }
+        });
+    }
     let output = Output { json: options.json };
 
     match &command {

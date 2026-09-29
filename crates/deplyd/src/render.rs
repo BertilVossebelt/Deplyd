@@ -30,10 +30,30 @@ impl Output {
     }
 }
 
+/// Something to do on the way out, whichever of the many stops is taken.
+///
+/// A background watcher has a record other processes read, and `stop` is
+/// called from dozens of places between its start and its loop - no runs, no
+/// targets, an environment that stopped existing. Marking the record from each
+/// would miss one; marking it here misses none. Set once, by the watcher.
+static BEFORE_LEAVING: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> =
+    std::sync::OnceLock::new();
+
+pub fn before_leaving(what: impl Fn() + Send + Sync + 'static) {
+    let _ = BEFORE_LEAVING.set(Box::new(what));
+}
+
+fn leave(code: i32) -> ! {
+    if let Some(what) = BEFORE_LEAVING.get() {
+        what();
+    }
+    std::process::exit(code);
+}
+
 /// Always exit 1: deplyd could not run, which is never a verdict.
 pub fn stop(message: &str, hints: &[String]) -> ! {
     refuse(message, hints);
-    std::process::exit(1);
+    leave(1);
 }
 
 /// The same, but it returns, so a caller that owes the shell a different exit
@@ -1048,7 +1068,7 @@ pub fn stop_free(message: &str, hooks: &[String]) -> ! {
     }
     println!();
     let _ = std::io::stdout().flush();
-    std::process::exit(0);
+    leave(0);
 }
 
 /// What is watching in the background, and what has finished.
