@@ -1084,9 +1084,9 @@ pub fn watchers(held: &[deplyd_core::watchers::Watcher]) {
         return;
     }
 
-    // Records are never deleted, so this list only grows. Everything still
-    // running, and just enough of what finished to be useful - otherwise a
-    // year of watchers buries the one you are looking for.
+    // Finished records are kept a month, and the newest ten for longer, so
+    // there can be dozens. Everything still running, and just enough of what
+    // finished to be useful - otherwise they bury the one you are looking for.
     const FINISHED_SHOWN: usize = 3;
 
     let (live, finished): (Vec<_>, Vec<_>) = held.iter().partition(|w| w.is_live());
