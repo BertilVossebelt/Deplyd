@@ -334,7 +334,8 @@ Deplyd never writes to GitHub and never changes your code. What it does write:
 
 - `git fetch`, which updates your own remote-tracking refs and sends nothing
 - its own files in your config directory - settings, watcher records and their
-  logs - or `.deplyd.json` in the repo if you put one there
+  logs - or `.deplyd.json` in the repo if you put one there. Finished watcher
+  records are the one thing it removes: after thirty days, and never the newest ten
 - one file in this machine's startup folder, and only if you ask for it with
   `--at-startup`. The only thing it writes outside its own directory
 
