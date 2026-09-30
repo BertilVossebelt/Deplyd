@@ -109,7 +109,7 @@ pub struct ReportOptions {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// The last deployed commit, and your changes in it
+    /// What each target is running, what is pending, and your changes in it
     #[command(infer_subcommands = true)]
     Status {
         /// Narrow it to one pull request or one commit
