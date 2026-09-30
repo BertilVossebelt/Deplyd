@@ -1,15 +1,12 @@
 //! Watchers that come back when the machine does.
 //!
-//! Each platform has its own way in, and all three of them are a file:
-//! a `.cmd` in the Startup folder on Windows, a LaunchAgent plist on macOS, a
-//! systemd user unit on Linux. No installer, no service manager to talk to, and
-//! nothing that needs privileges.
+//! Each platform's way in is a file: a `.cmd` in the Startup folder on Windows,
+//! a LaunchAgent plist on macOS, a systemd user unit on Linux. No installer, no
+//! privileges.
 //!
-//! What it writes there runs `deplyd watch startup run <id>`, not the watch itself.
-//! The indirection is what makes turning one off possible: deplyd does not remove
-//! startup files, so the file stays where it is, and the record it consults decides whether
-//! anything happens. Turning one off is a line in a file rather than a deletion
-//! nobody can undo.
+//! The file runs `deplyd watch startup run <id>`, not the watch itself. deplyd
+//! does not remove startup files, so turning one off is a line in the record it
+//! consults rather than a deletion nobody can undo.
 
 use std::path::PathBuf;
 
@@ -23,8 +20,8 @@ pub struct Entry {
     pub repo: String,
     pub enabled: bool,
     pub created_at: i64,
-    /// What was written, and where. Kept so it can be named when turning one
-    /// off: the file stays, and someone may want to remove it by hand.
+    /// What was written, and where. The file stays, so it can be named for
+    /// anyone who wants to remove it by hand.
     pub os_file: String,
 }
 
@@ -85,11 +82,8 @@ pub fn set_enabled(id: &str, enabled: bool) -> Result<Entry, String> {
     Ok(entry)
 }
 
-/// Which of the three shapes to write.
-///
-/// Passed rather than asked, so the other two can be tested from whichever one
-/// you happen to be on. Two thirds of this file would otherwise be code nobody
-/// here ever runs.
+/// Which of the three shapes to write. Passed rather than asked, so the other
+/// two can be tested from whichever one you are on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     Windows,
@@ -119,8 +113,7 @@ pub fn location_for(platform: Platform) -> Result<PathBuf, String> {
         let appdata = std::env::var_os("APPDATA").ok_or_else(|| {
             "APPDATA is not set, so the Startup folder cannot be found".to_string()
         })?;
-        // A component at a time, so the path reads the way this platform writes
-        // them rather than as a mix of both kinds of slash.
+        // A component at a time, so the path does not mix both slashes.
         return Ok(PathBuf::from(appdata)
             .join("Microsoft")
             .join("Windows")
@@ -170,12 +163,9 @@ pub fn os_file(platform: Platform, id: &str, exe: &str) -> (String, String) {
             ),
         );
     }
-    // RemainAfterExit and KillMode are not decoration. ExecStart starts the
-    // watcher and returns, and systemd reads a oneshot returning as the unit
-    // having finished - so it tears the cgroup down and takes the watcher with
-    // it. A new process group is no help; a cgroup is not a process group.
-    // Without these, --at-startup leaves nothing running after a boot, and the
-    // only way to find that out is to reboot.
+    // RemainAfterExit and KillMode are load-bearing: ExecStart returns as soon
+    // as the watcher is started, and systemd reads that as the unit having
+    // finished, then tears the cgroup down with the watcher inside it.
     (
         format!("deplyd-{id}.service"),
         format!(
@@ -193,11 +183,9 @@ pub fn os_file(platform: Platform, id: &str, exe: &str) -> (String, String) {
     )
 }
 
-/// Writes the platform's file and returns where it went.
-///
-/// On Linux the unit also needs a link from `default.target.wants` before
-/// systemd will start it, which is what `systemctl --user enable` would create.
-/// Written directly, so no service manager has to be talked to.
+/// Writes the platform's file and returns where it went. On Linux it also makes
+/// the `default.target.wants` link `systemctl --user enable` would, so no
+/// service manager has to be talked to.
 pub fn install(id: &str, exe: &str) -> Result<PathBuf, String> {
     let platform = Platform::here();
     let directory = location_for(platform)?;
@@ -214,10 +202,9 @@ pub fn install(id: &str, exe: &str) -> Result<PathBuf, String> {
         let wants = directory.join("default.target.wants");
         if std::fs::create_dir_all(&wants).is_ok() {
             let link = wants.join(&name);
-            // symlink_metadata, not exists: a link left pointing at a unit that
-            // has moved reads as absent to exists(), and then creating it fails
-            // as already there. The unit would sit enabled-looking and never
-            // start, which is the failure you find out about at the next boot.
+            // symlink_metadata, not exists: a link pointing at a unit that has
+            // moved reads as absent, and creating it then fails as already
+            // there - leaving it enabled-looking and never starting.
             if std::fs::symlink_metadata(&link).is_err() {
                 let _ = std::os::unix::fs::symlink(&path, &link);
             }
@@ -227,25 +214,21 @@ pub fn install(id: &str, exe: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// Time and pid together. Time alone collides for two registrations in the same
-/// second, and the second one would overwrite the first's record while leaving
-/// its startup file behind - a file that then runs a watch nothing knows about.
+/// Time and pid together. Time alone collides within a second, and the loser
+/// leaves a startup file behind that runs a watch nothing knows about.
 pub fn new_id(pid: u32) -> String {
     format!("{:x}{:04x}", crate::watchers::now(), pid & 0xffff)
 }
 
-/// An entry already asking for this exact watch on this exact repo.
-///
-/// Registering is not idempotent on its own: the startup folder would collect
-/// one file per time you ran the command, every one of them starting its own
-/// watcher at every boot and spending the allowance again. deplyd cannot delete
-/// the files it wrote, so this has to be caught before one is written.
+/// An entry already asking for this exact watch on this exact repo. Without it
+/// the startup folder collects one file per run of the command, each starting
+/// its own watcher at every boot - and deplyd cannot delete them again.
 pub fn already_registered(repo: &str, args: &[String]) -> Option<Entry> {
     matching(&all(), repo, args).cloned()
 }
 
-/// The same question against a list you already have, so it can be tested
-/// without a config directory to write into.
+/// The same question against a list, so it can be tested without a config
+/// directory.
 pub fn matching<'a>(held: &'a [Entry], repo: &str, args: &[String]) -> Option<&'a Entry> {
     held.iter()
         .find(|entry| entry.repo == repo && entry.args == args)

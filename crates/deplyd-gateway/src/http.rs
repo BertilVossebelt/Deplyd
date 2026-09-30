@@ -8,16 +8,14 @@ use std::time::Duration;
 
 use super::Denied;
 
-/// Every GitHub request deplyd makes. All of them are GET, and no variant could
-/// be anything else.
+/// Every GitHub request deplyd makes. All of them GET.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     /// Recent runs of one workflow file.
     WorkflowRuns { workflow_file: String, limit: u32 },
     /// The jobs of one run, with their steps and conclusions.
     RunJobs { run_id: u64 },
-    /// One job's log. Per job, not per run: that endpoint returns a zip of all of
-    /// them, told apart afterwards by a text column.
+    /// One job's log. Per job, not per run: that endpoint returns a zip.
     JobLog { job_id: u64 },
     /// Deployments, optionally for one environment.
     Deployments {
@@ -115,21 +113,10 @@ pub trait Transport: Send + Sync {
 
     /// The least of the hourly allowance any answer has reported left.
     ///
-    /// Three things make this a floor rather than a figure.
-    ///
-    /// The `/rate_limit` endpoint reports a window of its own - against a `gh`
-    /// token it answers 5000 of 5000 used 0 while the headers on the same
-    /// exchange count down properly - so the headers are the source.
-    ///
-    /// The headers themselves disagree by route. `repos/{owner}/{repo}` and
-    /// `actions/runs/{id}/jobs` count together; `releases/latest` and
-    /// `actions/workflows/{file}/runs` count separately, with a window that
-    /// started at a different time. Both say `core`. deplyd spends from both,
-    /// so the lower of what it has seen is the one worth acting on.
-    ///
-    /// And the allowance is not deplyd's: `gh`, another watcher, anything else
-    /// on the same token spends it too. Only a number GitHub states can see
-    /// that, which is why deplyd does not count its own requests instead.
+    /// A floor, not a figure: the headers disagree by route - both say `core`
+    /// while counting separate windows - and `/rate_limit` answers about a
+    /// window of its own. The allowance is not deplyd's alone either, so only a
+    /// number GitHub states is worth acting on.
     fn allowance(&self) -> Option<Allowance> {
         None
     }
@@ -160,13 +147,8 @@ fn stated_allowance(headers: &reqwest::header::HeaderMap) -> Option<Allowance> {
     })
 }
 
-/// A client that can only read: the inner client is private and `get` is the only
-/// method, so nothing holding one can issue anything else.
-/// How long GitHub asked us to wait, from whichever header it used to say so.
-///
-/// `retry-after` is seconds. Failing that, a spent allowance is `remaining: 0`
-/// with `reset` as a unix time. Neither present means this 403 was about
-/// permissions, not pace, and the caller should not treat it as a pause.
+/// How long GitHub asked us to wait, from whichever header said so. Neither
+/// present means the 403 was about permissions, not pace.
 fn asked_to_wait(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     let value = |name| {
         headers
@@ -192,12 +174,14 @@ fn asked_to_wait(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     Some(Duration::from_secs(reset.saturating_sub(now).max(1)))
 }
 
+/// A client that can only read: the inner client is private and `get` is the
+/// only method, so nothing holding one can issue anything else.
 pub struct ReadOnlyHttp {
     client: reqwest::blocking::Client,
     token: String,
     api_base: String,
-    /// The last thing GitHub said about the allowance, kept so asking costs
-    /// nothing beyond the request that was being made anyway.
+    /// The last thing GitHub said about the allowance, so asking costs nothing
+    /// beyond the request being made anyway.
     stated: std::sync::Mutex<Option<Allowance>>,
 }
 
@@ -220,8 +204,8 @@ impl ReadOnlyHttp {
         let client = reqwest::blocking::Client::builder()
             .user_agent(concat!("deplyd/", env!("CARGO_PKG_VERSION")))
             .timeout(Duration::from_secs(30))
-            // A redirect is how the log endpoint serves its body, so some are needed.
-            // Bounded, because an unbounded chain is a way to be led somewhere else.
+            // The log endpoint serves its body by redirect. Bounded, because an
+            // unbounded chain is a way to be led somewhere else.
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()
             .map_err(|e| HttpError::Transport(e.to_string()))?;
@@ -244,8 +228,7 @@ impl ReadOnlyHttp {
 
         let response = self
             .client
-            // .get is the only verb this module ever names. There is no code path
-            // here that takes a method, so there is none to point at anything else.
+            // The only verb this module names; no code path here takes one.
             .get(&url)
             .bearer_auth(&self.token)
             .header("Accept", "application/vnd.github+json")
@@ -256,9 +239,8 @@ impl ReadOnlyHttp {
         if let Some(stated) = stated_allowance(response.headers())
             && let Ok(mut held) = self.stated.lock()
         {
-            // The worse news wins. Two routes can report two windows, and
-            // over-reporting what is left is the direction that gets someone
-            // refused mid-deploy.
+            // The worse news wins: over-reporting what is left is the
+            // direction that gets someone refused mid-deploy.
             *held = Some(match *held {
                 Some(before) if before.remaining <= stated.remaining => before,
                 _ => stated,
@@ -267,8 +249,8 @@ impl ReadOnlyHttp {
 
         let status = response.status();
         if !status.is_success() {
-            // 403 and 429 are how both rate limits arrive. A 403 for permissions
-            // carries neither header, and is left to be reported as itself.
+            // Both rate limits arrive as 403 or 429; a 403 for permissions
+            // carries neither header and is reported as itself.
             if matches!(status.as_u16(), 403 | 429)
                 && let Some(wait) = asked_to_wait(response.headers())
             {
@@ -289,9 +271,9 @@ impl ReadOnlyHttp {
     }
 }
 
-/// Proves, at runtime, that every route this build can construct is a GET against
-/// the repository it was told to read. Used by the self-check, so the binary states
-/// this about itself rather than about the source it was compiled from.
+/// Proves at runtime that every route this build can construct is a GET against
+/// the repository it was told to read - so the self-check states this about the
+/// binary, not about the source it came from.
 pub fn routes_are_read_only() -> Result<Vec<String>, Denied> {
     let samples = [
         Route::WorkflowRuns {
@@ -315,8 +297,8 @@ pub fn routes_are_read_only() -> Result<Vec<String>, Denied> {
     let mut described = Vec::new();
     for route in &samples {
         let path = route.path("owner", "repo");
-        // A route that escaped the repository would be reading something the
-        // caller never asked about, so the shape is checked rather than assumed.
+        // A route that escaped the repository would read something nobody
+        // asked about, so the shape is checked rather than assumed.
         if !path.starts_with("repos/owner/repo/") {
             return Err(Denied::new(
                 path.clone(),
@@ -355,8 +337,8 @@ mod tests {
 
     #[test]
     fn retry_after_wins_over_the_reset_time() {
-        // Secondary limits send retry-after; obeying the hour-away reset instead
-        // would stop a watcher for an hour over a momentary burst.
+        // Secondary limits send retry-after; the hour-away reset would stop a
+        // watcher for an hour over a momentary burst.
         let wait = asked_to_wait(&headers(&[
             ("retry-after", "30"),
             ("x-ratelimit-remaining", "0"),
@@ -400,8 +382,8 @@ mod tests {
 
     #[test]
     fn a_forbidden_with_allowance_left_is_not_a_pause() {
-        // 403 also means "you may not read this". Sleeping on it would turn a
-        // permissions problem into a watcher that appears to hang.
+        // 403 also means "you may not read this", and sleeping on that is a
+        // watcher that appears to hang.
         assert_eq!(
             asked_to_wait(&headers(&[("x-ratelimit-remaining", "4999")])),
             None

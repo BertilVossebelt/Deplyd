@@ -1,13 +1,11 @@
 //! Starting deplyd again, detached, so a watcher outlives the terminal.
 //!
 //! The child is deplyd itself with the same arguments minus the flag that asked
-//! for this, so a background watcher is exactly the watcher you would have had
-//! in front of you. Its output goes to a file rather than nowhere, because the
-//! first question about a watcher that stopped is always what it last said.
+//! for this. Its output goes to a file, because the first question about a
+//! watcher that stopped is what it last said.
 //!
-//! Detaching uses the safe half of each platform's API: creation flags on
-//! Windows, a new process group on unix. Neither needs `unsafe`, which the
-//! workspace forbids outright.
+//! Detaching uses the safe half of each platform's API - creation flags on
+//! Windows, a new process group on unix - since the workspace forbids `unsafe`.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -46,8 +44,8 @@ impl std::fmt::Display for BackgroundError {
 
 impl std::error::Error for BackgroundError {}
 
-/// Starts deplyd detached with `args`, writing everything it says to `log`.
-/// Returns the child's pid, which is kept for reporting rather than for control.
+/// Starts deplyd detached with `args`, writing what it says to `log`. The pid
+/// it returns is for reporting, not for control.
 #[allow(clippy::disallowed_types)] // the gateway is the only place a process starts
 pub fn respawn(args: &[String], log: &Path) -> Result<u32, BackgroundError> {
     let exe = std::env::current_exe()
@@ -59,8 +57,7 @@ pub fn respawn(args: &[String], log: &Path) -> Result<u32, BackgroundError> {
             reason: error.to_string(),
         })?;
     }
-    // Appended, not truncated: a watcher restarted after a crash should not
-    // erase the evidence of the crash.
+    // Appended: a watcher restarted after a crash should not erase the evidence.
     let out = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

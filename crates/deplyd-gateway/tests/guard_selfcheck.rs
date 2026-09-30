@@ -1,8 +1,8 @@
 //! The self-check is what the shipped binary runs to prove its own guard is intact.
 //! These tests prove the self-check itself is worth running.
 //!
-//! The cases live in the library, not here, so `deplyd check` and this suite assert
-//! exactly the same things. Two lists would drift the first time one was corrected.
+//! The cases live in the library, so `deplyd check` and this suite assert the
+//! same things. Two lists would drift the first time one was corrected.
 
 use deplyd_gateway::git::Verb;
 use deplyd_gateway::selfcheck::{self, EXPECTED_VERBS};

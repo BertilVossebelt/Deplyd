@@ -1,12 +1,9 @@
 //! Proof that the test sandbox cannot reach a remote.
 //!
-//! These tests are about the harness, not about deplyd. They exist because fixture
-//! construction needs writing git verbs, which the gateway deliberately cannot
-//! express, and that is where a porting accident would come from.
-//!
-//! Every case asserts that git *refuses* a remote it was pointed at. The addresses
-//! used are reserved by RFC 2606 (`.invalid`, `.example`) and can never resolve to a
-//! real host, so even a sandbox that failed to refuse would have nothing to reach.
+//! About the harness, not deplyd: fixture construction needs writing git verbs,
+//! which is where a porting accident would come from. Every case asserts git
+//! *refuses* a remote, and the addresses are RFC 2606 reserved, so even a sandbox
+//! that failed to refuse would have nothing to reach.
 
 mod support;
 
@@ -166,9 +163,8 @@ fn run_git_applies_the_restriction_on_every_call() {
     );
 }
 
-/// Requires the refusal to be git declining the transport, not the host failing to
-/// resolve. Both produce an error and only one is the sandbox working: a test that
-/// accepted either would keep passing if the protocol restriction were removed.
+/// Requires git declining the transport, not the host failing to resolve: only
+/// one of those is the sandbox working, and both produce an error.
 fn assert_transport_refused(protocol: &str, output: &str) {
     assert!(
         output.contains(&format!("transport '{protocol}' not allowed")),

@@ -1,9 +1,8 @@
 //! A git repository that cannot reach a remote, however wrong the code under test is.
 //!
-//! Setting up a fixture needs `init`, `add` and `commit`, which are writes and so have
-//! no place in the read-only gateway. That leaves the test harness able to run git
-//! directly, which is exactly where a porting accident would come from. So the harness
-//! removes the possibility rather than relying on care:
+//! Fixtures need `init`, `add` and `commit`, which have no place in a read-only
+//! gateway - so the harness runs git itself, and removes the possibility of
+//! reaching a remote rather than relying on care:
 //!
 //! * `GIT_ALLOW_PROTOCOL=file` makes git refuse ssh, https and the git protocol
 //!   outright. Not a policy deplyd checks - git itself will not speak them.
@@ -12,9 +11,8 @@
 //! * `GIT_TERMINAL_PROMPT=0` and an empty `GIT_ASKPASS` mean nothing can prompt for a
 //!   credential that a sandboxed run should never have.
 //!
-//! Where a remote is needed, it is a bare repository in the same temp directory
-//! reached over `file://`. There is no configuration of this sandbox that names a
-//! host, so there is nothing to typo into a real one.
+//! Where a remote is needed it is a bare repository in the same temp directory
+//! over `file://`. No configuration here names a host.
 
 #![allow(dead_code)] // each test binary uses a different part of this
 
@@ -35,9 +33,7 @@ pub struct Sandbox {
 
 impl Sandbox {
     /// Copies a fixture from the PowerShell suite and turns it into a repository.
-    ///
-    /// The fixtures are shared rather than duplicated: they describe workflow shapes,
-    /// not PowerShell, and two copies would drift the first time one was corrected.
+    /// Shared rather than duplicated: two copies would drift.
     pub fn from_fixture(name: &str) -> Self {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -186,11 +182,8 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// Strips comments and string literals from a line of Rust before auditing it.
-///
-/// The guard files describe the rules they enforce, in prose and in assertion
-/// messages, so scanning raw text would fail on the explanation of the rule rather
-/// than on a breach of it.
+/// Strips comments and string literals from a line of Rust before auditing it:
+/// the guards describe the rules they enforce, and prose is not a breach.
 pub fn code_only(line: &str) -> String {
     let without_comment = match line.find("//") {
         Some(at) => &line[..at],

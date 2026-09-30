@@ -1,9 +1,8 @@
 //! The command line. A verb says what to do, a flag says how.
 //!
-//! Options hang off the verbs that use them rather than off the root, so
-//! `--help` for a verb lists what that verb will actually do something with.
-//! `main` still wants them in one place, so [`Command::options`] gathers them
-//! back up, filling in the default for anything the verb never offered.
+//! Options hang off the verbs that use them, so a verb's `--help` lists what it
+//! will act on. [`Command::options`] gathers them back up for `main`, filling in
+//! the default for anything the verb never offered.
 
 use clap::builder::styling::Styles;
 use clap::{Args, Parser, Subcommand};
@@ -13,9 +12,8 @@ use crate::term;
 /// How many changes a listing shows when nothing says otherwise.
 pub const DEFAULT_TAKE: u32 = 10;
 
-/// The help wearing the same palette as the reports, rather than a second one
-/// of its own. clap's default is bold and underline only, so without this the
-/// help is the one colourless thing deplyd prints.
+/// The help in the same palette as the reports: clap's default is bold and
+/// underline only, so the help was the one colourless thing deplyd printed.
 fn styles() -> Styles {
     Styles::styled()
         .header(term::ACCENT)
@@ -111,7 +109,7 @@ pub struct ReportOptions {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// The last deployed commit, and your changes in it
+    /// What each target is running, what is pending, and your changes in it
     #[command(infer_subcommands = true)]
     Status {
         /// Narrow it to one pull request or one commit
@@ -207,9 +205,8 @@ pub enum Command {
         shell: clap_complete::Shell,
     },
 
-    /// Bare names for the shell to complete against.
-    ///
-    /// Hidden: the shell calls it, people do not.
+    /// Bare names for the shell to complete against. Hidden: the shell calls it,
+    /// people do not.
     #[command(hide = true)]
     Complete {
         /// environments or authors
@@ -254,11 +251,8 @@ pub enum StartupAction {
     Run { id: Option<String> },
 }
 
-/// What `watch` was asked to do.
-///
-/// `pr` and `commit` repeat what `status` takes, rather than sharing its enum:
-/// they read the same but they are not the same question, and `stop` and `log`
-/// have no meaning under `status`.
+/// What `watch` was asked to do. `pr` and `commit` repeat what `status` takes
+/// rather than sharing its enum: `stop` and `log` mean nothing under `status`.
 #[derive(Debug, Subcommand, Clone)]
 pub enum WatchAction {
     /// One pull request
@@ -482,10 +476,9 @@ pub fn read_pull_request_number(value: Option<&String>) -> Result<u32, String> {
     }
 }
 
-/// Whether this command line should hand the watch to a detached copy.
-///
-/// Its own function so the rule can be tested without starting anything: the
-/// cost of getting it wrong is deplyd spawning deplyd until something stops it.
+/// Whether this command line should hand the watch to a detached copy. Its own
+/// function so it can be tested without starting anything: getting it wrong is
+/// deplyd spawning deplyd until something stops it.
 pub fn should_detach(command: &Command) -> bool {
     match command {
         Command::Watch {
@@ -498,17 +491,13 @@ pub fn should_detach(command: &Command) -> bool {
     }
 }
 
-/// The command line a boot-time entry should remember.
-///
-/// `--at-startup` goes, or every boot registers another one. `--background`
-/// has to be there, or what boot starts is a plain watch: no record, nothing
-/// in `deplyd list watchers`, and no way to stop it short of finding the process.
-/// The repo is pinned because a machine starting up is in no directory in
-/// particular.
+/// The command line a boot-time entry should remember. `--at-startup` goes, or
+/// every boot registers another; `--background` stays, or boot starts a watch
+/// with nothing in `deplyd list watchers` and no way to stop it. The repo is
+/// pinned, since a machine starting up is in no directory in particular.
 pub fn args_for_startup(given: &[String], repo_root: &str) -> Vec<String> {
-    // --watcher-id goes too. It names one particular run, and a boot that
-    // replayed it would beat against a record belonging to a watcher that
-    // stopped months ago instead of making one of its own.
+    // --watcher-id goes too: it names one run, and a boot that replayed it would
+    // beat against a record belonging to a watcher that stopped months ago.
     let mut args: Vec<String> = Vec::new();
     let mut skip_next = false;
     for arg in given {
@@ -616,8 +605,7 @@ mod tests {
     #[test]
     fn boot_does_not_inherit_one_run_s_identity() {
         // --watcher-id names a single run. Replayed at boot it would stamp a
-        // record made months ago rather than a fresh one, so the new watcher
-        // would be invisible and an old row would look alive again.
+        // record made months ago, so the new watcher would be invisible.
         let given: Vec<String> = ["watch", "--watcher-id", "abc123", "--at-startup"]
             .iter()
             .map(|s| s.to_string())
@@ -657,10 +645,9 @@ mod tests {
 
     #[test]
     fn a_watcher_never_asks_for_another_watcher() {
-        // The child is started with the same line minus the flags, but it is
-        // the id that settles it: whatever arguments survive, a copy that knows
-        // its own name must not spawn a third. Getting this wrong is not a bug
-        // that sits there quietly - it is deplyd starting deplyd for ever.
+        // The child is started with the same line minus the flags, but the id
+        // settles it: whatever survives, a copy that knows its own name must not
+        // spawn a third. Getting this wrong is deplyd starting deplyd for ever.
         let asked = Cli::try_parse_from(["deplyd", "watch", "--background"]).expect("shape");
         assert!(should_detach(&asked.command), "the one you typed");
 

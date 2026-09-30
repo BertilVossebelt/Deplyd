@@ -37,9 +37,8 @@ const DEPLOY_ACTIONS: &[&str] = &[
     "peaceiris/actions-gh-pages",
     "actions/deploy-pages",
     "pulumi/actions",
-    // Publishing a release or a package is how a CLI, a library or an image
-    // ships. Nothing reaches a server, but a version reaches its users, which
-    // is the same question deplyd answers.
+    // A CLI, a library or an image ships by publishing: nothing reaches a
+    // server, but a version reaches its users.
     "softprops/action-gh-release",
     "ncipollo/release-action",
     "actions/create-release",
@@ -79,8 +78,8 @@ const DEPLOY_COMMANDS: &[&str] = &[
 /// Input names that, when they carry a choice, are naming an environment.
 const ENVIRONMENT_INPUT_NAMES: &[&str] = &["environment", "env", "target", "stage"];
 
-/// The words in a name, split on punctuation and camelCase. Comparing against the
-/// name with punctuation removed made "deploy-latest" contain "test".
+/// The words in a name, split on punctuation and camelCase. Stripping the
+/// punctuation instead made "deploy-latest" contain "test".
 pub fn segments(value: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut current = String::new();
@@ -135,9 +134,8 @@ pub struct JobFacts {
     /// What tells matrix legs apart.
     pub matrix_dimensions: Vec<String>,
     pub step_count: usize,
-    /// A step of this job ships something. Held per job, not per workflow: a
-    /// release workflow is mostly deciding, building and gating, and only the
-    /// job that actually ships is a thing you can ask about.
+    /// A step of this job ships something. Per job, not per workflow: a release
+    /// workflow mostly decides, builds and gates.
     pub deploys: bool,
 }
 
@@ -170,13 +168,10 @@ impl WorkflowFacts {
         self.uses_input_ref || self.calls_workflow
     }
 
-    /// By key or display name. A called workflow arrives as "Deploy API / deploy-api".
-    ///
-    /// A matrix leg needs more work: the API reports it expanded, so `build`
-    /// with `name: ${{ matrix.target }}` comes back as `x86_64-apple-darwin`,
-    /// matching neither the key nor the name as written. Without this it would
-    /// find no facts, and a job with no facts looks exactly like a job with no
-    /// evidence that it ships.
+    /// By key or display name. A called workflow arrives as "Deploy API /
+    /// deploy-api", and a matrix leg arrives expanded - `name: ${{ matrix.target
+    /// }}` comes back as `x86_64-apple-darwin`, matching neither. A job with no
+    /// facts looks exactly like one with no evidence that it ships.
     pub fn job(&self, name: &str) -> Option<&JobFacts> {
         let last = name.rsplit('/').next().unwrap_or(name).trim();
         if let Some(found) = self
@@ -203,9 +198,8 @@ impl WorkflowFacts {
             return Some(found);
         }
 
-        // A named one arrives as whatever the template resolved to, which
-        // matches nothing. Attributable only while exactly one job could have
-        // produced it; more than one and a guess would be worse than nothing.
+        // A named one resolves to something matching nothing, so it is
+        // attributable only while exactly one job could have produced it.
         let mut templated = self
             .jobs
             .iter()
@@ -269,8 +263,8 @@ fn read_jobs(document: &Node) -> Vec<JobFacts> {
                 .map(str::to_string)
                 .unwrap_or_else(|| key.clone());
 
-            // A called workflow is named by a path, possibly with a @ref and possibly
-            // in another repository. Only the file name is useful here.
+            // A path, possibly with a @ref and in another repository. Only the
+            // file name is useful here.
             let calls_workflow = job.get_str(&["uses"]).and_then(|uses| {
                 let path = uses.split('@').next().unwrap_or(uses);
                 let file = path.rsplit('/').next().unwrap_or(path);
@@ -334,8 +328,8 @@ fn job_ships(job: &Node) -> bool {
     false
 }
 
-/// Paths a job's steps agree on, and only when they all agree: two steps in
-/// different directories mean the job covers both, and guessing is worse.
+/// Paths a job's steps agree on, and only when they all do: two steps in
+/// different directories mean the job covers both.
 fn step_working_directories(job: &Node) -> Vec<String> {
     let Some(steps) = job.get("steps") else {
         return Vec::new();
@@ -358,9 +352,8 @@ fn step_working_directories(job: &Node) -> Vec<String> {
     }
 }
 
-/// Trigger path filters, reduced to plain prefixes. `services/api/**` says the same
-/// thing a working-directory does. Negations and mid-pattern wildcards are skipped
-/// rather than guessed at.
+/// Trigger path filters as plain prefixes: `services/api/**` says what a
+/// working-directory does. Negations and mid-pattern wildcards are skipped.
 fn read_trigger_paths(document: &Node) -> Vec<String> {
     let Some(on) = document.get("on") else {
         return Vec::new();
@@ -375,8 +368,7 @@ fn read_trigger_paths(document: &Node) -> Vec<String> {
             let Some(pattern) = item.as_str() else {
                 continue;
             };
-            // "!services/api/docs/**" excludes rather than includes, and a pattern
-            // starting with a wildcard covers everything.
+            // "!..." excludes, and a leading wildcard covers everything.
             if pattern.starts_with('!') || pattern.starts_with('*') {
                 continue;
             }
@@ -397,7 +389,7 @@ fn read_trigger_paths(document: &Node) -> Vec<String> {
 }
 
 /// A `workflow_dispatch` choice input naming the environment. The API does not
-/// expose what was chosen at dispatch time, but the options say which names exist.
+/// say what was chosen, but the options say which names exist.
 fn read_input_environments(document: &Node) -> Vec<String> {
     let Some(inputs) = document.at(&["on", "workflow_dispatch", "inputs"]) else {
         return Vec::new();
@@ -427,9 +419,8 @@ fn read_input_environments(document: &Node) -> Vec<String> {
     found
 }
 
-/// Every `working-directory` in the document, wherever it sits. Walked rather than
-/// read from known paths because a step may set one too, and the workflow-level view
-/// is meant to describe the file.
+/// Every `working-directory` in the document, wherever it sits: a step may set
+/// one too, and this view is meant to describe the whole file.
 fn collect_working_directories(node: &Node, into: &mut Vec<String>) {
     match node {
         Node::Map(entries) => {
@@ -452,8 +443,8 @@ fn collect_working_directories(node: &Node, into: &mut Vec<String>) {
     }
 }
 
-/// A checkout step whose `ref` comes from a dispatch input. The run's own ref then
-/// says nothing about what was deployed, so the log has to be read.
+/// A checkout whose `ref` comes from a dispatch input: the run's own ref then
+/// says nothing, so the log has to be read.
 fn uses_input_ref(document: &Node) -> bool {
     fn mentions_input(value: &str) -> bool {
         let compact: String = value.chars().filter(|c| !c.is_whitespace()).collect();

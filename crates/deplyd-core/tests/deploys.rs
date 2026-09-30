@@ -1,13 +1,12 @@
 //! Targets and verdicts, end to end against a real repository and a stubbed GitHub.
 //!
-//! These are the paths that had no coverage at all: resolving what a run deployed,
-//! deciding whether a change is in it, and the cross-check between the run log and
-//! the deployment record. Everything except the network runs for real.
+//! Resolving what a run deployed, deciding whether a change is in it, and the
+//! cross-check between log and deployment record. Only the network is stubbed.
 
 mod support;
 
 use deplyd_core::context::Context;
-use deplyd_core::github::GitHub;
+use deplyd_core::github::{GitHub, WorkflowRequest};
 use deplyd_core::repo::Repo;
 use deplyd_core::settings::Settings;
 use deplyd_core::targets::{self, ShaSource};
@@ -70,6 +69,67 @@ fn runs_for(github: &GitHub, file: &str, needs_log: bool) -> Vec<deplyd_core::gi
         run.needs_log = needs_log;
     }
     runs
+}
+
+#[test]
+fn a_listing_that_was_refused_is_not_an_empty_repository() {
+    // The stub answers 404 for a workflow nobody set up: an error handed on as
+    // an empty list. A watcher that took it for the truth would find the whole
+    // repository new on its next look.
+    let stub = StubGitHub::new().runs(
+        "deploy-production.yml",
+        &[StubRun::success(
+            100,
+            "2026-01-02T00:00:00Z",
+            &"a".repeat(40),
+        )],
+    );
+    let github = GitHub::new(Box::new(stub), "acme".into(), "widgets".into());
+
+    let found = github.runs_for_workflows(&[
+        WorkflowRequest {
+            index: 0,
+            file: "deploy-production.yml".into(),
+        },
+        WorkflowRequest {
+            index: 1,
+            file: "deploy-staging.yml".into(),
+        },
+    ]);
+
+    assert_eq!(found[0].1.len(), 1);
+    assert!(
+        found[1].1.is_empty(),
+        "the caller still gets a list to work with"
+    );
+    assert!(
+        github.missed_a_read(),
+        "but the look is known to be incomplete"
+    );
+    assert!(
+        !github.missed_a_read(),
+        "cleared as it answers, so one failure cannot silence every look after it"
+    );
+}
+
+#[test]
+fn a_listing_that_answered_is_not_a_missed_read() {
+    let stub = StubGitHub::new().runs(
+        "deploy-production.yml",
+        &[StubRun::success(
+            100,
+            "2026-01-02T00:00:00Z",
+            &"a".repeat(40),
+        )],
+    );
+    let github = GitHub::new(Box::new(stub), "acme".into(), "widgets".into());
+
+    github.runs_for_workflows(&[WorkflowRequest {
+        index: 0,
+        file: "deploy-production.yml".into(),
+    }]);
+
+    assert!(!github.missed_a_read());
 }
 
 #[test]
@@ -792,9 +852,8 @@ jobs:
 
 #[test]
 fn a_workflow_that_shows_no_evidence_still_reports_something() {
-    // Nothing here ships by any route deplyd can recognise, so there is nothing
-    // to be strict with. Guessing beats reporting a repository with no targets,
-    // which is the one answer that helps nobody.
+    // Nothing here ships by a route deplyd can recognise, so there is nothing to
+    // be strict with. Guessing beats reporting a repository with no targets.
     let world = World::new("no-evidence", UNRECOGNISABLE_WORKFLOW);
     let deployed = world.sandbox.head();
 
@@ -829,9 +888,8 @@ fn a_workflow_that_shows_no_evidence_still_reports_something() {
 
 #[test]
 fn target_jobs_puts_back_a_job_detection_will_not_credit() {
-    // The escape hatch that lets detection be strict at all. A release workflow
-    // that ships by some bespoke route gets one line of config rather than the
-    // six it used to take to remove what strictness now leaves out.
+    // The escape hatch that lets detection be strict at all: a bespoke release
+    // workflow costs one line of config.
     let world = World::new("insisted", PLAIN_WORKFLOW);
     let deployed = world.sandbox.head();
 
@@ -890,8 +948,7 @@ jobs:
 #[test]
 fn a_job_handing_off_to_another_workflow_keeps_the_benefit_of_the_doubt() {
     // Its steps live in a file deplyd cannot see, so there is no evidence to
-    // find and none to hold against it. Dropping it would lose the real deploy
-    // and keep the job beside it, which is the wrong way round.
+    // hold against it. Dropping it would lose the real deploy.
     let world = World::new("handoff", MIXED_WORKFLOW);
     let deployed = world.sandbox.head();
 

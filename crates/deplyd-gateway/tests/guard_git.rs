@@ -1,13 +1,9 @@
 //! Proof that the git gateway refuses what it should.
 //!
-//! Every test here asserts on a *refusal*. None of them runs the call to find out
-//! what would happen, and nothing in this file touches a repository, a remote or the
-//! network. A guard tested by performing the dangerous operation is the accident the
-//! guard exists to prevent.
-//!
-//! The strongest cases are not here at all, because they cannot be written: there is
-//! no `Verb::Push`, so `git push` is not a refusal, it is a compile error. What
-//! remains to test is the second layer - a permitted verb handed a writing argument.
+//! Every test asserts on a *refusal*, and none runs the call to find out: a guard
+//! tested by performing the dangerous operation is the accident it exists to
+//! prevent. The strongest cases cannot be written at all - there is no
+//! `Verb::Push` - so what is left is a permitted verb handed a writing argument.
 
 use deplyd_gateway::git::{ReadOnlyGit, Verb};
 
@@ -80,8 +76,7 @@ fn fetch_refspec_that_would_overwrite_branches_is_refused() {
 
 #[test]
 fn fetch_of_another_remote_is_refused() {
-    // Not because another remote is dangerous in itself, but because the allowlist
-    // is by exact spelling: anything unrecognised stops rather than being guessed at.
+    // The allowlist is by exact spelling: anything unrecognised stops.
     refusal(Verb::Fetch, &["some-other-remote"]);
 }
 
@@ -137,8 +132,7 @@ fn ordinary_reads_still_pass() {
 
 #[test]
 fn rendered_never_loses_an_argument() {
-    // The refusal messages quote this, and a call that under-reports what it would
-    // run would make the audit trail a lie.
+    // The refusal messages quote this, so under-reporting would be a lie.
     let call = allowed(Verb::Log, &["-1", "--format=%H"]);
     assert_eq!(call.rendered(), "git log -1 --format=%H");
     assert_eq!(call.argv().len(), 3);

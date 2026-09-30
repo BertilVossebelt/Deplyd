@@ -17,9 +17,7 @@ pub struct Record {
     pub label: String,
 }
 
-/// How far back to read per target. A repository can hold more history than
-/// anyone wants to page through, and the walk is per target, so this is a
-/// ceiling rather than a total.
+/// How far back to read per target - so a ceiling, not a total.
 pub const DEFAULT_DEPTH: usize = 200;
 
 /// One row: a pull request where there is one, a commit where there is not.
@@ -52,8 +50,7 @@ impl std::fmt::Display for NoAuthor {
 impl std::error::Error for NoAuthor {}
 
 /// Commits reachable from a revision, by one author or by everyone. None is
-/// everyone; an empty name is refused, because `--author=''` matches everyone
-/// while the report still says the commits are yours.
+/// everyone; an empty name is refused, since `--author=''` matches everyone.
 pub fn records(
     repo: &Repo,
     revision_args: &[&str],
@@ -67,9 +64,8 @@ pub fn records(
 
     let mut args: Vec<&str> = vec!["--no-merges"];
     if let Some(name) = author {
-        // An author is a name, not a pattern. Without this, "Ada [Team]" is an
-        // invalid regex and git fails, which deplyd read as "no changes" - a silent
-        // wrong answer rather than an error.
+        // An author is a name, not a pattern: "Ada [Team]" is an invalid regex,
+        // and git failing read as "no changes".
         args.push("--fixed-strings");
         args.push("--author");
         args.push(name);
@@ -78,10 +74,8 @@ pub fn records(
         // The name last but one: a subject can hold anything, so it stays the
         // final field and takes whatever tabs are left.
         "--format=%h%x09%ct%x09%cd%x09%an%x09%s",
-        // format-local, not format: a commit merged on github.com records UTC
-        // while one made here records its own offset, and rendering each in
-        // the zone it happens to carry puts the column out of order without
-        // any of the times being wrong.
+        // format-local, not format: github.com records UTC and a commit made
+        // here records its own offset, which puts the column out of order.
         "--date=format-local:%Y-%m-%d %H:%M",
     ]);
     args.extend_from_slice(revision_args);
@@ -121,9 +115,8 @@ pub fn records(
 /// Collapses records for the same commit across targets, newest first. A commit in
 /// two scopes is one change labelled COMBINED, not two rows.
 pub fn merge_records(records: &[Record]) -> Vec<Entry> {
-    // Grouped through an index rather than by scanning what is already grouped:
-    // that scan was a comparison per record per record, which a repository with
-    // real history notices.
+    // An index rather than a scan of what is already grouped: that was a
+    // comparison per record per record.
     let mut first_seen: HashMap<&str, usize> = HashMap::new();
     let mut grouped: Vec<(String, Vec<&Record>)> = Vec::new();
 
@@ -327,8 +320,7 @@ mod tests {
 
     #[test]
     fn grouping_holds_up_when_the_same_commit_is_far_apart() {
-        // The index replaced a scan of everything grouped so far. Two records for
-        // one commit with a thousand between them is what that scan was for.
+        // Two records for one commit with a thousand between them.
         let mut records = Vec::new();
         records.push(record("same", 1_000, "API"));
         for index in 0..1_000 {
@@ -355,9 +347,8 @@ mod tests {
 
     #[test]
     fn an_empty_author_is_refused() {
-        // git log --author='' matches everyone, reporting the whole team's work as
-        // one person's. Asking for everyone outright is a different thing, and is
-        // spelled None.
+        // git log --author='' matches everyone, reporting the team's work as one
+        // person's. Asking for everyone is spelled None.
         let repo = crate::repo::Repo::discover(std::path::Path::new(".")).expect("a repo");
         assert!(records(&repo, &["HEAD"], &[], "API", Some("   ")).is_err());
         assert!(records(&repo, &["HEAD"], &[], "API", None).is_ok());

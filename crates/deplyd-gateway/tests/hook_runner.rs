@@ -1,8 +1,7 @@
 //! What a hook may do to deplyd, and what it may not.
 //!
-//! A hook is the user's own script, so it is the one thing here deplyd cannot
-//! reason about. These cover the ways a badly behaved one could take the watcher
-//! with it.
+//! A hook is the user's own script, the one thing here deplyd cannot reason
+//! about. These cover the ways a bad one could take the watcher with it.
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
