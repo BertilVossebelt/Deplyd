@@ -4,9 +4,48 @@
 //! about. These cover the ways a bad one could take the watcher with it.
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use deplyd_gateway::hook;
+
+/// Every script these tests run, written in one go before any of them starts
+/// a process.
+///
+/// Not laziness per test: on Linux a file cannot be executed while something
+/// holds it open for writing, and a child one test is starting inherits, for
+/// the moment between fork and exec, whatever another test's thread has open.
+/// Written by test A while test B spawns, a script came back "Text file busy"
+/// once in CI and not the next hundred times. Writing them all under one lock
+/// before the first spawn leaves no write for a fork to overlap.
+struct Scripts {
+    reads_stdin: PathBuf,
+    /// What `reads_stdin` copies its input into.
+    seen: PathBuf,
+    hangs: PathBuf,
+    chatty: PathBuf,
+}
+
+static SCRIPTS: LazyLock<Scripts> = LazyLock::new(|| {
+    let seen = std::env::temp_dir().join(format!("deplyd-hook-seen-{}.txt", std::process::id()));
+    Scripts {
+        reads_stdin: script(
+            "reads-stdin",
+            &format!("cat > '{}'", seen.display()),
+            &format!(
+                "[Console]::In.ReadToEnd() | Set-Content -Encoding utf8 '{}'",
+                seen.display()
+            ),
+        ),
+        seen,
+        hangs: script("hangs", "sleep 30", "Start-Sleep -Seconds 30"),
+        chatty: script(
+            "chatty",
+            "i=0; while [ $i -lt 4000 ]; do echo 'a line of complaint' >&2; i=$((i+1)); done",
+            "1..4000 | ForEach-Object { [Console]::Error.WriteLine('a line of complaint') }",
+        ),
+    }
+});
 
 fn scratch(name: &str, body: &str) -> PathBuf {
     let directory = std::env::temp_dir().join(format!("deplyd-hook-{}", std::process::id()));
@@ -33,25 +72,15 @@ fn script(name: &str, sh: &str, ps: &str) -> PathBuf {
 
 #[test]
 fn a_hook_is_handed_the_payload_on_stdin() {
-    let seen = std::env::temp_dir().join(format!("deplyd-hook-seen-{}.txt", std::process::id()));
-    let path = script(
-        "reads-stdin",
-        &format!("cat > '{}'", seen.display()),
-        &format!(
-            "[Console]::In.ReadToEnd() | Set-Content -Encoding utf8 '{}'",
-            seen.display()
-        ),
-    );
-
     let outcome = hook::run(
-        &path,
+        &SCRIPTS.reads_stdin,
         "{\"kind\":\"deploy.succeeded\"}",
         hook::DEFAULT_TIMEOUT,
     )
     .expect("it should run");
     assert!(outcome.ok(), "stderr: {}", outcome.stderr);
 
-    let written = std::fs::read_to_string(&seen).expect("the hook should have written it");
+    let written = std::fs::read_to_string(&SCRIPTS.seen).expect("the hook should have written it");
     assert!(
         written.contains("deploy.succeeded"),
         "the hook should have been given the event, saw: {written:?}"
@@ -62,10 +91,9 @@ fn a_hook_is_handed_the_payload_on_stdin() {
 fn a_hook_that_never_finishes_is_stopped() {
     // Otherwise a watcher stops watching the first time a hook waits on
     // something, which is the failure nobody would attribute to the hook.
-    let path = script("hangs", "sleep 30", "Start-Sleep -Seconds 30");
-
     let started = Instant::now();
-    let error = hook::run(&path, "{}", Duration::from_secs(2)).expect_err("it should be stopped");
+    let error =
+        hook::run(&SCRIPTS.hangs, "{}", Duration::from_secs(2)).expect_err("it should be stopped");
 
     assert!(
         matches!(error, hook::HookError::TimedOut { .. }),
@@ -82,14 +110,8 @@ fn a_hook_that_never_finishes_is_stopped() {
 fn a_hook_that_says_a_great_deal_does_not_wedge_us() {
     // A pipe nobody drains fills and blocks the writer. Read after the wait
     // rather than during it, this hangs forever instead of finishing.
-    let path = script(
-        "chatty",
-        "i=0; while [ $i -lt 4000 ]; do echo 'a line of complaint' >&2; i=$((i+1)); done",
-        "1..4000 | ForEach-Object { [Console]::Error.WriteLine('a line of complaint') }",
-    );
-
-    let outcome =
-        hook::run(&path, "{}", Duration::from_secs(60)).expect("it should finish, not hang");
+    let outcome = hook::run(&SCRIPTS.chatty, "{}", Duration::from_secs(60))
+        .expect("it should finish, not hang");
     assert!(
         outcome.ok(),
         "it exited badly: {}",

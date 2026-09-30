@@ -1,7 +1,7 @@
 //! The descendant of `Test-SourceIsReadOnly`.
 //!
-//! The crate fails its tests if anything outside the gateway can start a process,
-//! or if its narrow opt-out from the lint is copied elsewhere.
+//! The crate fails its tests if anything outside the gateway can start a process
+//! or remove a file, or if its narrow opt-out from the lint is copied elsewhere.
 //!
 //! A backstop: the primary guarantee is that dangerous operations are
 //! unrepresentable. This catches someone reaching past the gateway.
@@ -16,6 +16,9 @@ const GATEWAY_ONLY: &[(&str, &str)] = &[
     ("Command::new", "spawning a process"),
     ("clippy::disallowed_types", "opting out of the spawn lint"),
     ("clippy::disallowed_methods", "opting out of the write lint"),
+    // Only tidy.rs, and only a finished watcher's record or log. The gateway
+    // is the boundary; the narrowness is in that module and its tests.
+    ("fs::remove_file", "removing a file"),
 ];
 
 /// Constructs that would reach a process or the filesystem without naming either,
@@ -29,8 +32,7 @@ const FORBIDDEN_EVERYWHERE: &[(&str, &str)] = &[
         "std::env::set_var",
         "changing the environment changes what a child process is",
     ),
-    ("fs::remove_dir_all", "deplyd never deletes"),
-    ("fs::remove_file", "deplyd never deletes"),
+    ("fs::remove_dir_all", "deplyd never removes a directory"),
 ];
 
 /// The workspace root, two levels above this crate. The guards audit every crate,

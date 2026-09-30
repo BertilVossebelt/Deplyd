@@ -137,3 +137,83 @@ fn what_is_running_is_never_buried_by_what_has_finished() {
     assert_eq!(live[0].id, "live0001");
     assert_eq!(finished.len(), 40);
 }
+
+#[test]
+fn what_finished_long_ago_is_named_for_tidying_and_the_rest_is_not() {
+    // Forty finished, one a day. The newest ten stay by count whatever their
+    // age, the next twenty stay because a month has not passed, and the last
+    // ten have served their purpose.
+    let now = deplyd_core::watchers::now();
+    let day = 86_400;
+    let mut held: Vec<Watcher> = (0..40i64)
+        .map(|i| {
+            let mut watcher = record(60, 0);
+            watcher.id = format!("old{i:03}");
+            watcher.started_at = now - day * (i + 2);
+            watcher.stopped_at = Some(now - day * (i + 1));
+            watcher
+        })
+        .collect();
+
+    let mut running = record(60, 0);
+    running.id = "live0001".into();
+    running.started_at = now - day * 400;
+    held.push(running);
+
+    let stale: Vec<&str> = deplyd_core::watchers::stale(&held, now)
+        .iter()
+        .map(|w| w.id.as_str())
+        .collect();
+
+    assert!(!stale.contains(&"live0001"), "a live one is never tidied");
+    for i in 0..30 {
+        let id = format!("old{i:03}");
+        assert!(!stale.contains(&id.as_str()), "{id} should be kept");
+    }
+    for i in 30..40 {
+        let id = format!("old{i:03}");
+        assert!(stale.contains(&id.as_str()), "{id} should go");
+    }
+    assert_eq!(stale.len(), 10);
+}
+
+#[test]
+fn the_newest_finished_are_kept_however_old_they_are() {
+    let now = deplyd_core::watchers::now();
+    let held: Vec<Watcher> = (0..deplyd_core::watchers::KEEP_FINISHED as i64)
+        .map(|i| {
+            let mut watcher = record(60, 0);
+            watcher.id = format!("ancient{i:02}");
+            watcher.stopped_at = Some(now - 86_400 * (365 + i));
+            watcher
+        })
+        .collect();
+
+    assert!(
+        deplyd_core::watchers::stale(&held, now).is_empty(),
+        "ten a year old are still the newest ten"
+    );
+}
+
+#[test]
+fn one_that_went_quiet_is_dated_from_its_last_heartbeat() {
+    let now = deplyd_core::watchers::now();
+    let mut held: Vec<Watcher> = (0..deplyd_core::watchers::KEEP_FINISHED as i64)
+        .map(|i| {
+            let mut watcher = record(60, 0);
+            watcher.id = format!("recent{i:02}");
+            watcher.stopped_at = Some(now - 60 * i);
+            watcher
+        })
+        .collect();
+
+    // Never marked stopped: its heartbeat just ended, forty days ago.
+    let mut quiet = record(60, 40 * 86_400);
+    quiet.id = "quiet001".into();
+    held.push(quiet);
+
+    let stale = deplyd_core::watchers::stale(&held, now);
+    assert_eq!(stale.len(), 1);
+    assert_eq!(stale[0].id, "quiet001");
+    assert_eq!(stale[0].finished_at(), now - 40 * 86_400);
+}

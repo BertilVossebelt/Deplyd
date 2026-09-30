@@ -135,7 +135,7 @@ pub enum Command {
         #[arg(long = "every", global = true, value_name = "DURATION")]
         every: Option<String>,
 
-        /// Let go of the terminal and keep watching. deplyd watchers lists them
+        /// Let go of the terminal and keep watching. deplyd list watchers lists them
         #[arg(short = 'B', long = "background", global = true)]
         background: bool,
 
@@ -179,9 +179,9 @@ pub enum Command {
         action: HookAction,
     },
 
-    /// Keep a default author, environment or repo
+    /// Keep a default author, environment, repo, depth or every
     Remember {
-        /// author, environment or repo
+        /// author, environment, repo, depth or every
         what: Option<String>,
         /// The value to remember
         value: Option<String>,
@@ -311,7 +311,7 @@ pub enum HookAction {
     },
     /// Stop kicking a script. It is not deleted.
     Remove {
-        /// Path as `deplyd hooks` lists it
+        /// Path as `deplyd list hooks` lists it
         path: String,
     },
     /// Run every hook once with a made-up event, to see what they do
@@ -493,8 +493,8 @@ pub fn should_detach(command: &Command) -> bool {
 
 /// The command line a boot-time entry should remember. `--at-startup` goes, or
 /// every boot registers another; `--background` stays, or boot starts a watch
-/// with no record and no way to stop it. The repo is pinned, since a machine
-/// starting up is in no directory in particular.
+/// with nothing in `deplyd list watchers` and no way to stop it. The repo is
+/// pinned, since a machine starting up is in no directory in particular.
 pub fn args_for_startup(given: &[String], repo_root: &str) -> Vec<String> {
     // --watcher-id goes too: it names one run, and a boot that replayed it would
     // beat against a record belonging to a watcher that stopped months ago.

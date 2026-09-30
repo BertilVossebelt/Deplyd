@@ -30,10 +30,30 @@ impl Output {
     }
 }
 
+/// Something to do on the way out, whichever of the many stops is taken.
+///
+/// A background watcher has a record other processes read, and `stop` is
+/// called from dozens of places between its start and its loop - no runs, no
+/// targets, an environment that stopped existing. Marking the record from each
+/// would miss one; marking it here misses none. Set once, by the watcher.
+static BEFORE_LEAVING: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> =
+    std::sync::OnceLock::new();
+
+pub fn before_leaving(what: impl Fn() + Send + Sync + 'static) {
+    let _ = BEFORE_LEAVING.set(Box::new(what));
+}
+
+fn leave(code: i32) -> ! {
+    if let Some(what) = BEFORE_LEAVING.get() {
+        what();
+    }
+    std::process::exit(code);
+}
+
 /// Always exit 1: deplyd could not run, which is never a verdict.
 pub fn stop(message: &str, hints: &[String]) -> ! {
     refuse(message, hints);
-    std::process::exit(1);
+    leave(1);
 }
 
 /// The same, but it returns, so a caller that owes the shell a different exit
@@ -1045,7 +1065,7 @@ pub fn stop_free(message: &str, hooks: &[String]) -> ! {
     }
     println!();
     let _ = std::io::stdout().flush();
-    std::process::exit(0);
+    leave(0);
 }
 
 /// What is watching in the background, and what has finished.
@@ -1061,8 +1081,9 @@ pub fn watchers(held: &[deplyd_core::watchers::Watcher]) {
         return;
     }
 
-    // Records are never deleted, so this list only grows: everything still
-    // running, and just enough of what finished to be useful.
+    // Finished records are kept a month, and the newest ten longer, so there
+    // can be dozens. Everything still running, and enough of what finished to
+    // be useful.
     const FINISHED_SHOWN: usize = 3;
 
     let (live, finished): (Vec<_>, Vec<_>) = held.iter().partition(|w| w.is_live());
@@ -1109,7 +1130,7 @@ pub fn watchers(held: &[deplyd_core::watchers::Watcher]) {
             deplyd_core::watchers::directory().display()
         );
     }
-    println!("{DIM}deplyd watchers stop <id>, deplyd watchers log <id>{DIM:#}");
+    println!("{DIM}deplyd watch stop <id>, deplyd watch log <id>{DIM:#}");
     println!();
 }
 
@@ -1126,9 +1147,9 @@ pub fn watcher_started(watcher: &deplyd_core::watchers::Watcher) {
     );
     println!("  {DIM}saying what it sees into {}{DIM:#}", watcher.log);
     println!();
-    println!("  {OK}deplyd watchers{OK:#}{DIM}            what is running{DIM:#}");
+    println!("  {OK}deplyd list watchers{OK:#}{DIM}            what is running{DIM:#}");
     println!(
-        "  {OK}deplyd watchers stop {}{OK:#}{DIM}  when you have had enough{DIM:#}",
+        "  {OK}deplyd watch stop {}{OK:#}{DIM}  when you have had enough{DIM:#}",
         watcher.id
     );
     println!();
@@ -1209,7 +1230,7 @@ pub fn startup_entries(
     if let Some(location) = location {
         println!("{DIM}This machine looks in {}{DIM:#}", location.display());
     }
-    println!("{DIM}deplyd startup disable <id> stops one without deleting anything.{DIM:#}");
+    println!("{DIM}deplyd watch startup disable <id> stops one without deleting anything.{DIM:#}");
     println!();
 }
 
@@ -1231,7 +1252,7 @@ pub fn startup_already(entry: &deplyd_core::startup::Entry) {
     println!("{OK}Already starts at boot{OK:#}  {DIM}{}{DIM:#}", entry.id);
     println!();
     println!("  {DIM}{}{DIM:#}", entry.os_file);
-    println!("  {DIM}Nothing new was written; deplyd startup lists them.{DIM:#}");
+    println!("  {DIM}Nothing new was written; deplyd watch startup lists them.{DIM:#}");
     println!();
 }
 

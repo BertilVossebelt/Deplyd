@@ -138,8 +138,11 @@ pub fn run(path: &Path, payload: &str, timeout: Duration) -> Result<Outcome, Hoo
             Ok(None) if started.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
-                // Joined after the kill, so no thread holds a dead pipe.
-                let _ = collect(draining);
+                // Not joined: the kill reaches the hook, not what the hook
+                // started - `sh` running `sleep 30` leaves `sleep` behind - and
+                // that survivor holds the stderr pipe open, so joining would
+                // wait out the very hang the timeout cut short.
+                drop(draining);
                 return Err(HookError::TimedOut {
                     path: path.to_path_buf(),
                     after: timeout,

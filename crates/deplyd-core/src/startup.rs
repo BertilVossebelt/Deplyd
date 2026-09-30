@@ -4,9 +4,9 @@
 //! a LaunchAgent plist on macOS, a systemd user unit on Linux. No installer, no
 //! privileges.
 //!
-//! The file runs `deplyd startup run <id>`, not the watch itself. deplyd never
-//! deletes, so turning one off is a line in the record it consults rather than
-//! a deletion nobody can undo.
+//! The file runs `deplyd watch startup run <id>`, not the watch itself. deplyd
+//! does not remove startup files, so turning one off is a line in the record it
+//! consults rather than a deletion nobody can undo.
 
 use std::path::PathBuf;
 

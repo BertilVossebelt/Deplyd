@@ -10,10 +10,16 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-/// DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP. Together these give the child no
-/// console and no share in the terminal's Ctrl-C.
+/// CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: a console of its own that is
+/// never shown, and no share in the terminal's Ctrl-C.
+///
+/// Not DETACHED_PROCESS, which sounds like the right one. A detached process
+/// has no console at all, and every console program it then starts - git on
+/// every look, gh for the token, powershell for a hook - is given a fresh one,
+/// which appears as a window flashing up and vanishing again each time. A
+/// hidden console is inherited by all of them and stays hidden.
 #[cfg(windows)]
-const DETACHED: u32 = 0x0000_0008 | 0x0000_0200;
+const DETACHED: u32 = 0x0800_0000 | 0x0000_0200;
 
 #[derive(Debug)]
 pub enum BackgroundError {

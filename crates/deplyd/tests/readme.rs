@@ -93,7 +93,10 @@ fn every_command_the_readme_lists_exists() {
              it offers: {listed:?}"
         );
 
-        // A second word is a subcommand, and only the binary knows whether it is one.
+        // A second word is a subcommand, and only the binary knows whether it
+        // is one. A verb with no subcommands takes values instead, and then
+        // the word has to be one its help names: `remember author` is fine
+        // because `remember --help` says author.
         let Some(second) = second else { continue };
         let help = sandbox.deplyd_stdout(&[verb, "--help"]);
         let children: Vec<&str> = help
@@ -103,6 +106,17 @@ fn every_command_the_readme_lists_exists() {
             .take_while(|line| line.starts_with("  "))
             .filter_map(|line| line.split_whitespace().next())
             .collect();
+        if children.is_empty() {
+            let named = help
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|word| word == second);
+            assert!(
+                named,
+                "the README lists `deplyd {verb} {second}`, and {verb}'s help never mentions {second}:
+{help}"
+            );
+            continue;
+        }
         assert!(
             children.contains(&second.as_str()),
             "the README lists `deplyd {verb} {second}`, which {verb} does not take.

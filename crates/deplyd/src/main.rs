@@ -48,6 +48,24 @@ fn main() -> ExitCode {
 
     let command = parsed.command;
     let options = command.options();
+
+    // The copy doing the watching, before it can stop for any reason. A record
+    // that says running after its process has left is worse than no record:
+    // `list watchers` shows it, `watch stop` waits on it, and nothing comes.
+    if let Command::Watch {
+        watcher_id: Some(id),
+        ..
+    } = &command
+    {
+        let id = id.clone();
+        render::before_leaving(move || {
+            // Read again rather than kept: what is on disk by now is what
+            // other processes have been told, and it is that copy being closed.
+            if let Ok(mut record) = deplyd_core::watchers::find(&id) {
+                record.mark_stopped();
+            }
+        });
+    }
     let output = Output { json: options.json };
 
     match &command {
@@ -119,6 +137,9 @@ fn main() -> ExitCode {
     if let Command::List { what, .. } = &command {
         match what {
             ListWhat::Watchers => {
+                // Housekeeping first, so what the list counts as hidden is
+                // what is actually still there.
+                deplyd_core::watchers::tidy();
                 render::watchers(&deplyd_core::watchers::all());
                 return ExitCode::SUCCESS;
             }
@@ -1437,7 +1458,7 @@ fn startup(action: Option<&StartupAction>) {
     let named = |id: &Option<String>| -> String {
         match id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
             Some(id) => id.to_string(),
-            None => render::stop("Which one?", &["deplyd startup lists them.".into()]),
+            None => render::stop("Which one?", &["deplyd watch startup lists them.".into()]),
         }
     };
 
@@ -1445,11 +1466,11 @@ fn startup(action: Option<&StartupAction>) {
         None => render::startup_entries(&startup::all(), startup::os_location().ok()),
         Some(StartupAction::Disable { id }) => match startup::set_enabled(&named(id), false) {
             Ok(entry) => render::startup_changed(&entry),
-            Err(why) => render::stop(&why, &["deplyd startup lists them.".into()]),
+            Err(why) => render::stop(&why, &["deplyd watch startup lists them.".into()]),
         },
         Some(StartupAction::Enable { id }) => match startup::set_enabled(&named(id), true) {
             Ok(entry) => render::startup_changed(&entry),
-            Err(why) => render::stop(&why, &["deplyd startup lists them.".into()]),
+            Err(why) => render::stop(&why, &["deplyd watch startup lists them.".into()]),
         },
         Some(StartupAction::Run { .. }) => unreachable!("handled before the repo is opened"),
     }
@@ -1562,6 +1583,10 @@ fn watchers(action: &WatchAction) {
 fn start_in_background(context: &Context, repo: &Repo, plan: &WatchPlan) -> ExitCode {
     use deplyd_core::watchers::{self, Watcher};
 
+    // One in, the stalest out: the directory stays bounded for someone who
+    // starts watchers and never lists them.
+    watchers::tidy();
+
     let id = watchers::new_id(std::process::id());
     let log = watchers::directory().join(format!("{id}.log"));
 
@@ -1636,7 +1661,7 @@ fn hooks(settings: &mut Settings, action: &HookAction) {
             if settings.hooks.iter().any(|held| held == &shown) {
                 render::stop(
                     &format!("Already a hook: {shown}"),
-                    &["deplyd hooks lists them.".into()],
+                    &["deplyd list hooks lists them.".into()],
                 );
             }
 
@@ -1654,7 +1679,7 @@ fn hooks(settings: &mut Settings, action: &HookAction) {
             if settings.hooks.len() == before {
                 render::stop(
                     &format!("Not a hook: {path}"),
-                    &["deplyd hooks lists them.".into()],
+                    &["deplyd list hooks lists them.".into()],
                 );
             }
             save_settings(settings);
@@ -1822,8 +1847,8 @@ fn show_update() {
     println!();
 }
 
-/// A signpost, not a deed: deplyd never deletes, so removing it stays the
-/// installer's job and this prints the line that does it.
+/// A signpost, not a deed: deplyd removes nothing but its own finished watcher
+/// records, so uninstalling stays the installer's job and this prints the line.
 fn show_uninstall() {
     println!();
     println!("{}Removing deplyd{:#}", term::ACCENT, term::ACCENT);
