@@ -8,8 +8,8 @@ use serde::Deserialize;
 
 use crate::gateway::http::{HttpError, Route, Transport};
 
-/// How far back to look. Said in the output when it bites, since silence would
-/// otherwise read as "no such target".
+/// How far back to look. Said in the output when it bites, since silence reads
+/// as "no such target".
 pub const RUNS_PER_WORKFLOW: u32 = 15;
 /// How many deployments to walk when matching runs to an environment.
 pub const DEPLOYMENTS_PER_ENVIRONMENT: u32 = 20;
@@ -183,22 +183,16 @@ impl GitHub {
         }
     }
 
-    /// How long GitHub asked deplyd to wait, if it has, clearing it as it answers.
-    ///
-    /// Most callers treat a failed request as an empty answer, which is right for
-    /// one run and wrong for a loop: the loop has to know the difference between
-    /// "nothing is happening" and "we were not told".
+    /// How long GitHub asked deplyd to wait, clearing it as it answers. Callers
+    /// read a failed request as an empty answer, which is right for one run and
+    /// wrong for a loop.
     pub fn rate_limited(&self) -> Option<std::time::Duration> {
         self.paused.lock().ok().and_then(|mut held| held.take())
     }
 
     /// Whether a listing failed since this was last asked, clearing as it
-    /// answers.
-    ///
-    /// `rate_limited` covers the one refusal GitHub announces. This covers the
-    /// rest - a network that is not up yet, a 5xx, a token not yet readable -
-    /// which arrive as an empty list and are otherwise indistinguishable from a
-    /// repository where nothing has happened.
+    /// answers. `rate_limited` covers the refusal GitHub announces; this covers
+    /// the rest, which arrive as an empty list and look like a quiet repository.
     pub fn missed_a_read(&self) -> bool {
         self.missed
             .lock()
@@ -213,8 +207,7 @@ impl GitHub {
     }
 
     /// Forgets what it has been told. A watcher asks the same questions on
-    /// purpose, and memoised answers would make it blind to the very thing it
-    /// is watching for.
+    /// purpose, and memoised answers would make it blind.
     pub fn forget(&self) {
         if let Ok(mut caches) = self.caches.lock() {
             *caches = Caches::default();
@@ -227,8 +220,8 @@ impl GitHub {
 
     fn get(&self, route: &Route) -> Result<String, HttpError> {
         let answer = self.http.get(route, &self.owner, &self.repo);
-        // Noticed here because it is the one place every request passes through;
-        // the callers above swallow errors into empty answers.
+        // The one place every request passes through, and the callers above
+        // swallow errors into empty answers.
         if let Err(HttpError::RateLimited { wait, .. }) = &answer
             && let Ok(mut held) = self.paused.lock()
         {
@@ -245,18 +238,13 @@ impl GitHub {
         Some(parsed.tag_name)
     }
 
-    /// What is left of the hourly allowance, and when it refills.
-    ///
-    /// Read from the headers of a real request rather than from `/rate_limit`,
-    /// which answers about a window of its own: against a `gh` token it reports
-    /// 5000 of 5000 used 0 while the headers on the same exchange count down
-    /// correctly. One cheap request is made if nothing has been asked yet, so
-    /// the number is this moment's rather than the last command's.
+    /// What is left of the hourly allowance, and when it refills. From the
+    /// headers of a real request, since `/rate_limit` answers about a window of
+    /// its own - 5000 of 5000 while the headers count down properly.
     pub fn quota(&self) -> Result<Quota, HttpError> {
         if self.http.allowance().is_none() {
-            // One from each window. Asking only one gives that window's answer,
-            // which is how this reported thousands left while the other window
-            // was a hundred and fifty requests further along.
+            // One from each window: asking only one reported thousands left
+            // while the other was a hundred and fifty requests further on.
             let _ = self.get(&Route::LatestRelease);
             let _ = self.get(&Route::Deployments {
                 environment: None,
@@ -285,9 +273,8 @@ impl GitHub {
         Ok(parsed.workflow_runs)
     }
 
-    /// Empty when the request failed, and the failure remembered. The callers
-    /// here want a list to get on with; a watcher wants to know this one was not
-    /// an answer.
+    /// Empty when the request failed, and the failure remembered: callers want a
+    /// list to get on with, a watcher wants to know this was not an answer.
     fn runs_or_none(&self, workflow_file: &str) -> Vec<Run> {
         match self.runs_for_workflow(workflow_file) {
             Ok(found) => found,
@@ -298,8 +285,8 @@ impl GitHub {
         }
     }
 
-    /// Recent runs of several workflows at once. They have nothing to do with each
-    /// other, so waiting for each in turn was six round trips for no reason.
+    /// Recent runs of several workflows at once: they have nothing to do with
+    /// each other, so waiting for each in turn was six round trips.
     pub fn runs_for_workflows(&self, workflows: &[WorkflowRequest]) -> Vec<(usize, Vec<Run>)> {
         let mut collected: Vec<(usize, Vec<Run>)> = Vec::new();
 
@@ -324,8 +311,7 @@ impl GitHub {
         collected
     }
 
-    /// Fetches several job logs at once. These are the large, slow requests, and the
-    /// loop that builds targets used to read them one at a time.
+    /// Several job logs at once: these are the large, slow requests.
     pub fn prefetch_logs(&self, job_ids: &[u64]) {
         let pending: Vec<u64> = {
             let Ok(caches) = self.caches.lock() else {
@@ -383,8 +369,7 @@ impl GitHub {
         jobs
     }
 
-    /// Fetches several runs' jobs at once: the call is small and the waiting is all
-    /// latency.
+    /// Several runs' jobs at once: the call is small, the waiting is latency.
     pub fn prefetch_jobs(&self, run_ids: &[u64]) {
         let pending: Vec<u64> = {
             let Ok(caches) = self.caches.lock() else {
@@ -426,9 +411,9 @@ impl GitHub {
             .unwrap_or_default()
     }
 
-    /// One job's log as plain text. Per job, not per run: the run endpoint returns a
-    /// zip of every job's log, told apart afterwards by a text column - the step that
-    /// could hand one matrix leg another's commit.
+    /// One job's log as plain text. Per job, not per run: the run endpoint sends
+    /// a zip told apart by a text column, which could hand one matrix leg
+    /// another's commit.
     pub fn job_log(&self, job_id: u64) -> Option<String> {
         if let Ok(caches) = self.caches.lock()
             && let Some(found) = caches.logs.get(&job_id)
@@ -443,9 +428,8 @@ impl GitHub {
         log
     }
 
-    /// Walks an environment's deployments, returning the run ids that created them
-    /// and recording each commit. One walk per environment; the per-deployment
-    /// statuses calls are independent, so they go together.
+    /// Walks an environment's deployments for the run ids that created them,
+    /// recording each commit. One walk per environment, statuses together.
     pub fn deployments(&self, environment: &str) -> Vec<u64> {
         if let Ok(caches) = self.caches.lock()
             && let Some(found) = caches.deployments_asked.get(environment)
@@ -558,8 +542,8 @@ impl GitHub {
         {
             return Some(found.clone());
         }
-        // With an environment named, stop rather than borrowing another one's commit:
-        // a wrong comparison reads as a real disagreement.
+        // With an environment named, stop rather than borrow another one's
+        // commit: a wrong comparison reads as a real disagreement.
         if !environment.is_empty() {
             return None;
         }
@@ -600,8 +584,7 @@ impl Quota {
         self.limit.saturating_sub(self.remaining)
     }
 
-    /// 0.0 to 1.0. A limit of zero would be a divide by zero and is not a real
-    /// answer, so it reads as spent.
+    /// 0.0 to 1.0. A limit of zero is not a real answer, so it reads as spent.
     pub fn spent(&self) -> f64 {
         if self.limit == 0 {
             return 1.0;
@@ -648,8 +631,8 @@ mod quota_tests {
 
     #[test]
     fn more_remaining_than_the_limit_does_not_wrap() {
-        // Not a shape GitHub sends, but saturating_sub is the reason it cannot
-        // turn into four billion used.
+        // Not a shape GitHub sends; saturating_sub keeps it from reading as
+        // four billion used.
         let quota = at(10, 99);
         assert_eq!(quota.used(), 0);
     }

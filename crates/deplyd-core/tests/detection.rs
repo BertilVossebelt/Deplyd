@@ -1,8 +1,7 @@
 //! Detection, against the fixtures the PowerShell suite collected.
 //!
-//! Those tests drive the CLI and match on printed text. These assert the facts the
-//! printing is derived from, so a failure names what was misread rather than which
-//! line of output moved.
+//! Those drive the CLI and match printed text; these assert the facts behind it,
+//! so a failure names what was misread rather than which line moved.
 
 use deplyd_core::detect::{WorkflowFacts, facts_from_str, token};
 
@@ -180,9 +179,8 @@ fn a_job_is_found_by_key_or_by_display_name() {
 
 #[test]
 fn scope_is_per_job_not_per_workflow() {
-    // The PowerShell version kept one list per workflow, so two jobs with different
-    // working directories each got the union. The README always described it as a
-    // per-job property; this is where the two agree.
+    // The PowerShell version kept one list per workflow, so two jobs with
+    // different working directories each got the union.
     let text = concat!(
         "jobs:\n",
         "  deploy-api:\n",

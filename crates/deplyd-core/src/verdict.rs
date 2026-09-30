@@ -228,10 +228,8 @@ pub fn exit_code(status: Status, uncertain: bool) -> u8 {
     }
 }
 
-/// Decides whether one commit is deployd.
-///
-/// The same reasoning as a pull request, minus finding it: a commit is already the
-/// thing to look for, so there is no merge state and no number to report.
+/// Decides whether one commit is deployd. The same reasoning as a pull request,
+/// minus finding it: no merge state and no number to report.
 pub fn commit_report(
     context: &Context,
     repo: &Repo,
@@ -420,8 +418,7 @@ fn target_verdict(
 
     entry.status = TargetStatus::Deplyd;
 
-    // Information, not a caveat: later edits do not make the change any less
-    // deployed. Only commits touching the same files, and only the first of them.
+    // Information, not a caveat: later edits do not make it less deployed.
     entry.changed_after = history::later_commits_touching(repo, commit, &target.sha, files)
         .into_iter()
         .map(CommitReport::from)

@@ -38,9 +38,8 @@ fn a_heartbeat_that_stopped_is_lost_rather_than_running() {
 
 #[test]
 fn a_fast_watcher_still_gets_a_floor_before_it_is_presumed_gone() {
-    // Three times ten seconds is not long enough to survive one slow request,
-    // let alone a hook taking its full 30s timeout. Being wrongly called lost
-    // is not cosmetic: request_stop refuses anything not live, so a healthy
+    // Three times ten seconds does not survive one hook taking its full 30s
+    // timeout, and request_stop refuses anything not live - so a healthy
     // watcher would become unstoppable.
     assert_eq!(record(10, 25).state(), State::Running);
     assert_eq!(
@@ -78,10 +77,9 @@ fn two_watchers_started_in_the_same_second_get_different_names() {
 
 #[test]
 fn a_heartbeat_does_not_wipe_a_stop_someone_else_asked_for() {
-    // The two live in different processes: the watcher holds the record it
-    // loaded at the start, and `watchers stop` writes to the file underneath
-    // it. Stamping the time from memory puts stop_requested back to false, and
-    // then nothing ever stops - while the asking still says it worked.
+    // The two live in different processes, and `watchers stop` writes to the
+    // file underneath the watcher. Stamping from memory puts stop_requested
+    // back to false, and nothing ever stops.
     let mut mine = record(60, 0);
 
     let mut asked = mine.clone();
@@ -116,9 +114,8 @@ fn a_record_that_vanished_does_not_stop_the_watcher() {
 
 #[test]
 fn what_is_running_is_never_buried_by_what_has_finished() {
-    // Records are kept for ever, so a year of them would otherwise push the one
-    // you came to look at off the screen. Sorting is what the listing relies on
-    // to put live ones first, so it is asserted here rather than assumed.
+    // Records are kept for ever, and the listing relies on this order to put
+    // live ones first.
     let now = deplyd_core::watchers::now();
     let mut held: Vec<Watcher> = (0..40)
         .map(|i| {

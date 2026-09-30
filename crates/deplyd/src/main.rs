@@ -227,18 +227,15 @@ fn main() -> ExitCode {
         _ => None,
     };
 
-    // Before GitHub is opened at all. The child does the looking, so a parent
-    // that took the first look would spend the allowance twice over for it.
-    // watcher_id is set only on the copy that was started for this purpose, so
-    // it is what tells parent from child. Without it the child sees the same
-    // flags the parent did, backgrounds itself again, and deplyd spawns until
-    // something else stops it.
+    // Before GitHub is opened at all: the child does the looking, so a parent
+    // that took the first look would spend the allowance twice. watcher_id is
+    // what tells child from parent - without it the child backgrounds itself
+    // again, and deplyd spawns until something stops it.
     if let (true, Command::Watch { at_startup, .. }, Some(plan)) =
         (cli::should_detach(&command), &command, &watch_plan)
     {
-        // Registered first. A watch that cannot be written into the startup
-        // folder should say so before one is left running that will not come
-        // back, which is the failure nobody notices until the next reboot.
+        // Registered first: a watch that cannot be written into the startup
+        // folder should say so before one runs that will not come back.
         if *at_startup && let Err(why) = register_at_startup(&repo) {
             render::stop(&why, &["Nothing was started.".into()]);
         }
@@ -253,21 +250,8 @@ fn main() -> ExitCode {
         context.environment_phrase()
     ));
 
-    // The first look, retried rather than abandoned when it is a watcher doing
-    // the looking.
-    //
-    // A refused request answers empty, so every question after it would be
-    // answered from nothing: no targets found, no changes live. Both read as
-    // facts about the repository and neither is one, which is why this sits
-    // before the empty check and before anything is reported.
-    //
-    // Once watching, being refused is something to wait out - the loop already
-    // does exactly that further down. Exiting here instead would kill a watcher
-    // that started at boot into a spent allowance, and nothing would bring it
-    // back until the machine restarted.
-    // Both started before the first look, because the first look can itself be
-    // refused and waited out. A deadline created afterwards would not count that
-    // wait, and a record loaded afterwards would leave it unstamped.
+    // Both made before the first look, which can itself be refused and waited
+    // out: a deadline created afterwards would not count that wait.
     let running_as = match &command {
         Command::Watch { watcher_id, .. } => watcher_id.clone(),
         _ => None,
@@ -280,6 +264,10 @@ fn main() -> ExitCode {
         .and_then(|plan| plan.length)
         .map(|length| Instant::now() + length);
 
+    // Retried rather than abandoned when a watcher is doing the looking. A
+    // refused request answers empty, and "no targets, nothing live" reads as a
+    // fact about the repository when it is not - while exiting here would kill a
+    // watcher that started at boot into a spent allowance.
     let (runs, mut targets) = loop {
         let runs = collect_runs(&context, &github, &output);
         let targets = targets::build(&context, &repo, &github, &runs, &mut cache, |line| {
@@ -295,9 +283,8 @@ fn main() -> ExitCode {
             stop_for_spent_allowance(wait);
         }
 
-        // The same floor the loop uses. Without it a reset already almost due
-        // gives a one second wait, and this turns into a tight retry against
-        // the very thing that just refused us.
+        // The same floor the loop uses: without it a reset almost due gives a
+        // one second wait, and this becomes a tight retry against the refusal.
         let wait = wait.max(Duration::from_secs(60));
         if !options.json {
             render::watch_paused(wait);
@@ -427,11 +414,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// A command line that could not be read.
-///
-/// clap answers a typo with a usage block, and a missing subcommand with the
-/// whole help page. Neither is what someone who mistyped one word needs, so
-/// this says what was not understood and leaves finding the rest to `--help`.
+/// A command line that could not be read. clap answers a typo with a usage
+/// block and a missing subcommand with the whole help page, so this says what
+/// was not understood and leaves the rest to `--help`.
 fn misread(error: clap::Error) -> ExitCode {
     use clap::error::{ContextKind, ContextValue, ErrorKind};
 
@@ -481,9 +466,8 @@ fn misread(error: clap::Error) -> ExitCode {
             let mut words = path.split_whitespace().skip(1).peekable();
             let nested = words.peek().is_some();
 
-            // Asked of the tree rather than taken from the error: clap's list of
-            // valid subcommands counts `complete`, which is hidden because the
-            // shell calls it and people do not.
+            // Asked of the tree, not the error: clap's list counts `complete`,
+            // which is hidden because the shell calls it and people do not.
             let choices = visible_children(words);
             if !choices.is_empty() {
                 hints.push(choices.join(", "));
@@ -607,8 +591,7 @@ fn open_github(repo: &Repo) -> (GitHub, (String, String), WebBase) {
         )
     };
 
-    // A stubbed GitHub, when one is configured. No credential is needed for it and
-    // none is looked for: there is nothing to authenticate against.
+    // A stubbed GitHub, when one is configured: nothing to authenticate against.
     if let Some(files) = stub::FileTransport::from_environment() {
         return (
             GitHub::new(Box::new(files), owner.clone(), name.clone()),
@@ -721,10 +704,8 @@ fn read_interval(text: Option<&str>, fallback: u64, flag: &str) -> Duration {
     }
 }
 
-/// Polls, says what changed, and stops when it was told to.
-///
-/// The first look is the baseline. Announcing everything already true would be
-/// a wall of news about things that happened before anyone was watching.
+/// Polls, says what changed, and stops when it was told to. The first look is
+/// the baseline: announcing everything already true would be a wall of news.
 #[allow(clippy::too_many_arguments)]
 fn watch_loop(
     context: &Context,
@@ -760,12 +741,9 @@ fn watch_loop(
         render::watch_opening(context, until.as_ref(), every, deadline.is_some());
     }
 
-    // Before the first look, not only after every later one. What is live is read
-    // from the clone, and a clone that has not been fetched since yesterday has
-    // never heard of the commit that went live this morning - `git log` answers
-    // empty for it, which reads as "nothing is live". The fetch at the foot of
-    // this loop then makes the second look find the lot at once, and every one of
-    // them is announced as news to every hook.
+    // The first look needs one too. A stale clone has never heard of what went
+    // live overnight, so the baseline reads empty and the next look, the fetched
+    // one, announces the lot.
     let _ = repo.fetch_again();
 
     loop {
@@ -781,9 +759,8 @@ fn watch_loop(
             Err(error) => render::stop(&error.to_string(), &[]),
         };
 
-        // Asked before the events are worked out: a look that was refused saw an
-        // empty GitHub, and treating that as the truth would report everything as
-        // gone and then, next time, as new.
+        // Asked before the events: a refused look saw an empty GitHub, and
+        // treating that as the truth reports everything gone, then new.
         if let Some(wait) = github.rate_limited() {
             let wait = wait.max(Duration::from_secs(60));
             if !options.json {
@@ -801,18 +778,15 @@ fn watch_loop(
         }
 
         let snapshot = snapshot_of(&runs, &targets, &report);
-        // A look that could not read is neither news nor a baseline. Kept apart
-        // from the first look, which saw everything and is quiet for a different
-        // reason: there was nothing to compare it against.
+        // A look that could not read is neither news nor a baseline.
         if look_was_whole(github) {
             if let Some(before) = &previous {
                 for event in deplyd_core::watch::changes(before, &snapshot) {
                     render::watch_event(&event, options.json, web);
 
                     // After the event is printed, so what deplyd saw is on
-                    // screen whatever the hooks then do with it. A hook that
-                    // fails is said and the watch carries on: it is a
-                    // notification, not a step the deploy depends on.
+                    // screen whatever the hooks do with it. A hook that fails is
+                    // a notification, not a step the deploy depends on.
                     if !context.settings.hooks.is_empty() {
                         let payload = serde_json::to_string(&event).unwrap_or_default();
                         let mut failed = Vec::new();
@@ -822,11 +796,9 @@ fn watch_loop(
                             if outcome.is_err() {
                                 failed.push((path, outcome));
                             }
-                            // Between hooks, not after all of them. Each may
+                            // Between hooks, not after all of them: each may
                             // take its full timeout, and a watcher that has not
-                            // stamped for long enough reads as lost - at which
-                            // point `watchers stop` refuses it while it is still
-                            // very much running.
+                            // stamped reads as lost - then refuses to stop.
                             if let Some(watcher) = record.as_mut() {
                                 watcher.beat();
                             }
@@ -841,9 +813,8 @@ fn watch_loop(
             previous = Some(snapshot);
         }
 
-        // Stamped every look, which is what tells `watchers` this one is still
-        // going - and the same look picks up whatever another process wrote to
-        // the record, which is how being asked to stop arrives.
+        // Stamped every look, and the same look picks up whatever another
+        // process wrote - which is how being asked to stop arrives.
         if let Some(watcher) = record.as_mut()
             && watcher.beat()
         {
@@ -892,13 +863,9 @@ fn watch_loop(
 
 /// Waits, without going quiet.
 ///
-/// A rate limit can pause a watcher for the best part of an hour. Sleeping that
-/// off in one go stops the heartbeat, and a record that has not been stamped for
-/// three intervals reads as `Lost` - at which point `watchers stop` refuses it
-/// as "not running" while the process is very much alive and unstoppable.
-///
-/// So the wait is taken in slices: stamped each time, and still listening for a
-/// stop or a deadline it was given.
+/// A rate limit can pause a watcher for the best part of an hour, and a record
+/// unstamped for three intervals reads as `Lost` - which `watchers stop` then
+/// refuses as "not running". So the wait is taken in slices.
 fn wait_without_going_quiet(
     wait: Duration,
     record: &mut Option<deplyd_core::watchers::Watcher>,
@@ -925,12 +892,9 @@ fn wait_without_going_quiet(
     }
 }
 
-/// The one way out of the loop, so a record cannot be left saying "running"
-/// for a watcher that finished perfectly well.
-///
-/// Without this, ending on `--for` leaves the record untouched, and three
-/// intervals later `watchers` calls it "went quiet" - which is what it says for
-/// a crash. A clean end should not look like a failure.
+/// The one way out of the loop, so a record cannot be left saying "running" for
+/// a watcher that finished. Ending on `--for` otherwise reads as "went quiet",
+/// which is what a crash says.
 fn finished(
     record: Option<&mut deplyd_core::watchers::Watcher>,
     json: bool,
@@ -946,8 +910,7 @@ fn finished(
 }
 
 /// Whether the thing being waited for has happened, and what to say about it.
-/// None means keep watching. Saying it is the caller's job, because a JSON
-/// stream has no room for a sentence.
+/// None means keep watching; saying it is the caller's job.
 fn watch_reached(
     context: &Context,
     repo: &Repo,
@@ -973,16 +936,10 @@ fn watch_reached(
     }
 }
 
-/// Whether the look just taken saw everything it reports on.
-///
-/// deplyd reads GitHub for the runs and the clone for what is live, and both
-/// answer empty when they fail rather than saying so: a refused listing arrives
-/// as no runs at all. One such look is harmless by itself - nothing disappearing
-/// is ever an event - but absorbed as the state of the world it makes the look
-/// after it find the whole repository new, and that is one hook run per commit.
-///
-/// Asked once per look whatever the answer, so a failure is not left set to
-/// silence the look after it too.
+/// Whether the look just taken saw everything it reports on. A refused listing
+/// arrives as no runs at all, and absorbed as the state of the world that makes
+/// the next look find the whole repository new - one hook run per commit. Asked
+/// once a look, so one failure cannot silence the next.
 fn look_was_whole(github: &GitHub) -> bool {
     !github.missed_a_read()
 }
@@ -1042,8 +999,8 @@ fn collect_runs(
 ) -> Vec<deplyd_core::github::Run> {
     let facts: Vec<_> = context.environment_facts().collect();
 
-    // One request per workflow, all at once. They have nothing to do with each other,
-    // so waiting for each in turn was latency spent for no reason.
+    // One request per workflow, all at once: they are unrelated, and waiting for
+    // each in turn was latency spent for nothing.
     let requests: Vec<deplyd_core::github::WorkflowRequest> = facts
         .iter()
         .enumerate()
@@ -1275,8 +1232,7 @@ fn remember(settings: &mut Settings, what: Option<&str>, value: Option<&str>) {
             }
             let full = path.canonicalize().unwrap_or(path);
             if !full.join(".git").exists() {
-                // Remembering a path that cannot work leaves every later run failing
-                // here.
+                // A path that cannot work leaves every later run failing here.
                 render::stop(
                     &format!("Not a git repository: {}", full.display()),
                     &["Point at the root of a clone, the directory holding .git".into()],
@@ -1375,10 +1331,8 @@ fn help_subject() -> Option<String> {
         .then(|| first.get_name().to_string())
 }
 
-/// The words the reports use, under the help of the verbs that print them.
-///
-/// On the root help this was a wall nobody asked for. Here it sits beside the
-/// thing it explains, and `list` or `check` never shows it at all.
+/// The words the reports use, under the help of the verbs that print them. On
+/// the root help this was a wall nobody asked for.
 fn show_reading_key(verb: Option<&str>) {
     let (status, watch) = (Some("status") == verb, Some("watch") == verb);
     if !status && !watch {
@@ -1465,10 +1419,8 @@ fn key(style: anstyle::Style, word: &str, meaning: &str) {
     );
 }
 
-/// Writes the settings, or says why it could not.
-///
-/// Swallowed, this loses a hook silently: the list on screen would be the one
-/// that was wanted and the one on disk the one that will actually run.
+/// Writes the settings, or says why it could not. Swallowed, this loses a hook
+/// silently: the list on screen would not be the one that runs.
 fn save_settings(settings: &Settings) {
     if let Err(error) = settings.save() {
         render::stop(
@@ -1503,10 +1455,8 @@ fn startup(action: Option<&StartupAction>) {
     }
 }
 
-/// Writes this watch into wherever the machine looks at login.
-///
-/// The arguments are this run's own, minus the flag that asked for it, so what
-/// comes back after a reboot is the watch that was asked for.
+/// Writes this watch into wherever the machine looks at login. The arguments are
+/// this run's own, minus the flag that asked for it.
 fn register_at_startup(repo: &Repo) -> Result<(), String> {
     use deplyd_core::startup::{self, Entry};
 
@@ -1562,8 +1512,7 @@ fn run_at_startup(id: Option<&str>) -> ExitCode {
     }
 
     // entry.id, not the argument: `find` accepts a prefix, so `startup run abc`
-    // for entry abc123 would otherwise write into abc.log while every other
-    // command talks about abc123.
+    // for abc123 would write into abc.log while everything else says abc123.
     let log = startup::directory().join(format!("{}.log", entry.id));
     match deplyd_core::gateway::background::respawn(&entry.args, &log) {
         Ok(_) => ExitCode::SUCCESS,
@@ -1607,11 +1556,9 @@ fn watchers(action: &WatchAction) {
     }
 }
 
-/// Hands the whole watch over to a detached copy of deplyd and returns.
-///
-/// The child is given the same command line with the background flag dropped
-/// and its id added, so what runs in the background is the watch that was asked
-/// for rather than a reconstruction of it.
+/// Hands the whole watch over to a detached copy of deplyd and returns. The
+/// child gets this command line with the background flag dropped and its id
+/// added, so it runs the watch that was asked for, not a reconstruction.
 fn start_in_background(context: &Context, repo: &Repo, plan: &WatchPlan) -> ExitCode {
     use deplyd_core::watchers::{self, Watcher};
 
@@ -1630,10 +1577,9 @@ fn start_in_background(context: &Context, repo: &Repo, plan: &WatchPlan) -> Exit
         args.push(repo.root().display().to_string());
     }
 
-    // Written before the child exists, not after. The child looks its own record
-    // up on the way in, and a record that arrives late is a watcher that never
-    // heartbeats, never hears a stop, and cannot be listed - while the parent
-    // says it started fine.
+    // Written before the child exists: it looks its own record up on the way in,
+    // and one that arrives late is a watcher that never heartbeats, never hears
+    // a stop, and cannot be listed.
     let mut watcher = Watcher {
         id: id.clone(),
         pid: 0,
@@ -1781,10 +1727,8 @@ fn run_one_hook(path: &str, payload: &str) -> (String, Result<String, String>) {
     }
 }
 
-/// Nothing was read, because there was nothing left to read with.
-///
-/// Said rather than worked around: retrying is what spent it, and a watcher or
-/// a shell loop that cannot tell "no" from "nothing" will keep going.
+/// Nothing was read, because there was nothing left to read with. Said rather
+/// than worked around: retrying is what spent it.
 fn stop_for_spent_allowance(wait: std::time::Duration) -> ! {
     render::stop(
         "GitHub's hourly allowance is spent, so nothing was read.",
@@ -1795,15 +1739,11 @@ fn stop_for_spent_allowance(wait: std::time::Duration) -> ! {
     )
 }
 
-/// `quota`: how much of the hourly allowance is left.
-///
-/// Worth its own verb because every other verb spends it, and a watcher spends
-/// it steadily. Asking costs nothing: GitHub does not count this route.
+/// `quota`: how much of the hourly allowance is left. Worth its own verb because
+/// every other verb spends it, and asking costs nothing.
 fn show_quota() -> ExitCode {
-    // No repository asked for. The allowance belongs to the account, not to a
-    // repo, and needing to stand in one to ask how much is left would be a
-    // strange thing to insist on - not least when the reason you are asking is
-    // that something else already refused.
+    // No repository asked for: the allowance belongs to the account, and you may
+    // well be asking because something else already refused.
     let github = match stub::FileTransport::from_environment() {
         Some(files) => GitHub::new(Box::new(files), DEPLYD_OWNER.into(), DEPLYD_NAME.into()),
         None => {
@@ -1833,12 +1773,8 @@ fn show_quota() -> ExitCode {
     }
 }
 
-/// `check`: what the gateway allows, and whether this binary still obeys it.
-/// A signpost, not a deed. deplyd never deletes - `check` says so and the build
-/// guard enforces it - so removing it stays the installer's job, and this prints
-/// the line that does it.
-/// The line that installs the newest release. Installing over an existing copy is
-/// the update, so there is nothing separate to print.
+/// The line that installs the newest release. Installing over an existing copy
+/// is the update, so there is nothing separate to print.
 fn install_line() -> String {
     if cfg!(windows) {
         format!("irm {DEPLYD_RAW}/install.ps1 | iex")
@@ -1847,9 +1783,8 @@ fn install_line() -> String {
     }
 }
 
-/// Asks which release is newest and says whether this is it. Another signpost:
-/// replacing the binary is the installer's job, because deplyd does not write
-/// outside its own config.
+/// Asks which release is newest and says whether this is it. A signpost:
+/// replacing the binary is the installer's job.
 fn show_update() {
     let current = env!("CARGO_PKG_VERSION");
 
@@ -1887,6 +1822,8 @@ fn show_update() {
     println!();
 }
 
+/// A signpost, not a deed: deplyd never deletes, so removing it stays the
+/// installer's job and this prints the line that does it.
 fn show_uninstall() {
     println!();
     println!("{}Removing deplyd{:#}", term::ACCENT, term::ACCENT);
@@ -1914,6 +1851,7 @@ fn show_uninstall() {
     println!();
 }
 
+/// `check`: what the gateway allows, and whether this binary still obeys it.
 fn show_self_check() {
     println!();
     println!(
@@ -1944,9 +1882,8 @@ fn show_self_check() {
         "                      defaults, watcher records and logs, and what config init writes"
     );
 
-    // Named separately because it is the one write that lands outside deplyd's
-    // own directory. A check that says "only inside" while a file sits in the
-    // startup folder would be telling a comfortable lie.
+    // Named separately because it is the one write outside deplyd's own
+    // directory, and "only inside" would be a comfortable lie.
     let booted = deplyd_core::startup::all();
     match deplyd_core::startup::os_location() {
         Ok(where_) if !booted.is_empty() => {
@@ -1966,8 +1903,8 @@ fn show_self_check() {
     println!("  the one git write   fetch, which updates your own remote-tracking refs");
     println!("                      nothing is sent, and a fetch cannot change a remote");
 
-    // Deplyd still only reads. But it will start these, and what they do is not
-    // deplyd's to promise, so a check that reports what it does has to say so.
+    // deplyd still only reads, but it will start these, and what they do is not
+    // deplyd's to promise.
     let hooks = Settings::load().hooks;
     if hooks.is_empty() {
         println!("  hooks               none registered, so nothing else is ever started");

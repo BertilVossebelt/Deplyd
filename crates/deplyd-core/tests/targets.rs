@@ -144,12 +144,9 @@ fn several_checkouts_take_the_first_and_say_so() {
     assert!(resolved.warning.contains("2 different commits"));
 }
 
-/// A repository containing exactly the commits named, and nothing else.
-///
-/// Real commits cannot be made to have chosen shas, so the earlier version of this
-/// helper quietly claimed to hold shas it did not. Since resolving a commit asks the
-/// repository only one question, answering that question directly is both honest and
-/// enough.
+/// A repository containing exactly the commits named, and nothing else. Real
+/// commits cannot be made to have chosen shas, and resolving one asks the
+/// repository a single question, so it is answered directly.
 struct Present(Vec<String>);
 
 impl deplyd_core::targets::CommitLookup for Present {

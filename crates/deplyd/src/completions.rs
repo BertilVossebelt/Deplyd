@@ -9,9 +9,8 @@ use clap_complete::Shell;
 /// Both names the binary answers to. The installer links the second to the first.
 const NAMES: [&str; 2] = ["deplyd", "dp"];
 
-/// Written around the script so it can be found again. Appending this to a startup
-/// file twice has to leave one copy, whether the installer did it or a person did,
-/// and a comment is a comment in every shell here.
+/// Written around the script so it can be found again: appending it twice has to
+/// leave one copy, and a comment is a comment in every shell here.
 pub const START_MARKER: &str = "# >>> deplyd completions >>>";
 pub const END_MARKER: &str = "# <<< deplyd completions <<<";
 
@@ -23,9 +22,8 @@ pub fn emit(shell: Shell, command: &mut ClapCommand) {
     println!("{START_MARKER}");
     alias(shell);
 
-    // PowerShell is hand-written because it is the only generator that can also ask
-    // the binary for environments and authors, which is what the other half of
-    // completion is for. The rest get names and flags.
+    // PowerShell is hand-written: it is the only generator that can also ask the
+    // binary for environments and authors. The rest get names and flags.
     if shell == Shell::PowerShell {
         powershell(command);
     } else {
@@ -63,9 +61,8 @@ fn list(values: impl IntoIterator<Item = String>) -> String {
         .join(", ")
 }
 
-/// Name and description, for completion that shows what each one does. Objects
-/// rather than nested arrays: PowerShell flattens an array literal of arrays, and
-/// the pairs would come back as loose strings.
+/// Name and description, for completion that shows what each does. Objects
+/// rather than nested arrays, which PowerShell flattens into loose strings.
 fn pairs(values: impl IntoIterator<Item = (String, String)>) -> String {
     values
         .into_iter()
@@ -120,8 +117,7 @@ fn powershell(command: &mut ClapCommand) {
         .join("\n");
 
     // Options hang off the verbs that use them, so the whole tree is walked.
-    // Which verb accepts which is clap's business at parse time; completion
-    // only has to know a spelling when it sees one.
+    // Which verb accepts which is clap's business at parse time.
     let mut flags: Vec<(String, String)> = Vec::new();
     let mut value_flags: Vec<String> = Vec::new();
     for arg in arguments(command) {

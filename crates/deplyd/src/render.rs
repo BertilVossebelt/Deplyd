@@ -185,9 +185,8 @@ fn verdict_line(
 
     let (short, committed, subject) = commit_parts(repo, &target.sha);
 
-    // The deploy's time, not the commit's. "When did this go live" is the
-    // question; how old the code is answers a different one. The commit's date
-    // stands in only when GitHub told us nothing usable.
+    // The deploy's time, not the commit's: "when did this go live" is the
+    // question. The commit's date stands in only when GitHub said nothing.
     let when = deplyd_core::when::local_minute(&target.deployed_at).unwrap_or(committed);
 
     let linked = term::link(&short, &web.commit(&target.sha));
@@ -929,11 +928,9 @@ fn now_hms() -> String {
     format!("{:02}:{:02}:{:02}", day / 3600, (day % 3600) / 60, day % 60)
 }
 
-/// How much of the hourly allowance is left, as a bar and a number.
-///
-/// Worth showing because watching spends it: a look costs a request per deploy
-/// workflow, and a watcher left running overnight is the thing most likely to
-/// run an account dry.
+/// How much of the hourly allowance is left, as a bar and a number. Worth
+/// showing because watching spends it: a look costs a request per deploy
+/// workflow, and a watcher left overnight is what runs an account dry.
 pub fn quota(quota: &deplyd_core::github::Quota) {
     const WIDTH: usize = 28;
 
@@ -1064,9 +1061,8 @@ pub fn watchers(held: &[deplyd_core::watchers::Watcher]) {
         return;
     }
 
-    // Records are never deleted, so this list only grows. Everything still
-    // running, and just enough of what finished to be useful - otherwise a
-    // year of watchers buries the one you are looking for.
+    // Records are never deleted, so this list only grows: everything still
+    // running, and just enough of what finished to be useful.
     const FINISHED_SHOWN: usize = 3;
 
     let (live, finished): (Vec<_>, Vec<_>) = held.iter().partition(|w| w.is_live());

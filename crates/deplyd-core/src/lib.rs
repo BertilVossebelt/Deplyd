@@ -1,8 +1,7 @@
 //! deplyd-core - deciding what deployed, and whether a change is in it.
 //!
-//! This crate reaches the outside world only through `deplyd-gateway`, and cannot
-//! print: it has no terminal dependency, so the decide/print split that `lib/` and
-//! `commands/` kept by convention is a boundary the compiler checks.
+//! Reaches the outside world only through `deplyd-gateway`, and cannot print:
+//! the decide/print split is a boundary the compiler checks, not a convention.
 
 pub use deplyd_gateway as gateway;
 pub mod cache;

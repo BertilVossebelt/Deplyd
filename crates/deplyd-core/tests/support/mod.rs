@@ -1,12 +1,8 @@
 //! A repository and a GitHub that exist only for the test.
 //!
-//! The PowerShell suite shadows `git` with a local-only version so that fixtures can
-//! be written to but nothing can reach a remote. This does the same for both halves:
-//! the repository is real git in a temp directory with no remote configured, and
-//! GitHub is a set of canned documents answering routes.
-//!
-//! Everything above the gateway then runs for real - detection, target building, sha
-//! resolution, ancestry, verdicts - without a network or an account anywhere near it.
+//! The repository is real git in a temp directory with no remote configured, and
+//! GitHub is a set of canned documents answering routes. Everything above the
+//! gateway then runs for real, with no network or account anywhere near it.
 
 #![allow(dead_code)]
 
@@ -106,9 +102,8 @@ impl Sandbox {
         std::fs::write(directory.join(name), contents).expect("workflow");
     }
 
-    /// An origin pointing at a plausible GitHub URL, so owner and repo can be read.
-    /// Nothing is ever fetched from it: no such host exists, and the sandbox refuses
-    /// every protocol but file in any case.
+    /// An origin pointing at a plausible GitHub URL, so owner and repo can be
+    /// read. No such host exists, and the sandbox speaks only file anyway.
     pub fn set_origin(&self, slug: &str) {
         self.git(&[
             "remote",
@@ -462,10 +457,8 @@ pub fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// A cache file that cleans itself up.
-///
-/// Deletion lives here because this module is the one place in the tests allowed to
-/// remove anything, which is why the guard failed when the cases did it themselves.
+/// A cache file that cleans itself up. Deletion lives here because this module is
+/// the one place in the tests allowed to remove anything.
 pub struct TempCache {
     path: PathBuf,
 }

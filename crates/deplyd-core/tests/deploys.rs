@@ -1,8 +1,7 @@
 //! Targets and verdicts, end to end against a real repository and a stubbed GitHub.
 //!
-//! These are the paths that had no coverage at all: resolving what a run deployed,
-//! deciding whether a change is in it, and the cross-check between the run log and
-//! the deployment record. Everything except the network runs for real.
+//! Resolving what a run deployed, deciding whether a change is in it, and the
+//! cross-check between log and deployment record. Only the network is stubbed.
 
 mod support;
 
@@ -74,10 +73,9 @@ fn runs_for(github: &GitHub, file: &str, needs_log: bool) -> Vec<deplyd_core::gi
 
 #[test]
 fn a_listing_that_was_refused_is_not_an_empty_repository() {
-    // The stub answers 404 for a workflow nobody set up, which is the shape of
-    // every failure here: an error handed on as an empty list. A watcher that
-    // took it for the truth would find the whole repository new on its next
-    // look and kick every hook once per commit of it.
+    // The stub answers 404 for a workflow nobody set up: an error handed on as
+    // an empty list. A watcher that took it for the truth would find the whole
+    // repository new on its next look.
     let stub = StubGitHub::new().runs(
         "deploy-production.yml",
         &[StubRun::success(
@@ -854,9 +852,8 @@ jobs:
 
 #[test]
 fn a_workflow_that_shows_no_evidence_still_reports_something() {
-    // Nothing here ships by any route deplyd can recognise, so there is nothing
-    // to be strict with. Guessing beats reporting a repository with no targets,
-    // which is the one answer that helps nobody.
+    // Nothing here ships by a route deplyd can recognise, so there is nothing to
+    // be strict with. Guessing beats reporting a repository with no targets.
     let world = World::new("no-evidence", UNRECOGNISABLE_WORKFLOW);
     let deployed = world.sandbox.head();
 
@@ -891,9 +888,8 @@ fn a_workflow_that_shows_no_evidence_still_reports_something() {
 
 #[test]
 fn target_jobs_puts_back_a_job_detection_will_not_credit() {
-    // The escape hatch that lets detection be strict at all. A release workflow
-    // that ships by some bespoke route gets one line of config rather than the
-    // six it used to take to remove what strictness now leaves out.
+    // The escape hatch that lets detection be strict at all: a bespoke release
+    // workflow costs one line of config.
     let world = World::new("insisted", PLAIN_WORKFLOW);
     let deployed = world.sandbox.head();
 
@@ -952,8 +948,7 @@ jobs:
 #[test]
 fn a_job_handing_off_to_another_workflow_keeps_the_benefit_of_the_doubt() {
     // Its steps live in a file deplyd cannot see, so there is no evidence to
-    // find and none to hold against it. Dropping it would lose the real deploy
-    // and keep the job beside it, which is the wrong way round.
+    // hold against it. Dropping it would lose the real deploy.
     let world = World::new("handoff", MIXED_WORKFLOW);
     let deployed = world.sandbox.head();
 

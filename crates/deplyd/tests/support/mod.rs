@@ -2,9 +2,7 @@
 //! reach a remote.
 //!
 //! The one place in this crate's tests allowed to start a process, mirroring the
-//! gateway's role in `src/`. `guard_sandbox.rs` fails if any other test file spawns
-//! anything, which is how this module came to exist: the first version of `cli.rs`
-//! spawned directly and the guard caught it.
+//! gateway's role in `src/`. `guard_sandbox.rs` fails if any other test spawns.
 
 #![allow(dead_code)]
 
