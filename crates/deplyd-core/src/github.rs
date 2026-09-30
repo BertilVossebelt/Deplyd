@@ -166,6 +166,9 @@ pub struct GitHub {
     /// The longest pause GitHub has asked for and nobody has acted on yet.
     /// Kept apart from the caches, which `forget` empties.
     paused: Mutex<Option<std::time::Duration>>,
+    /// Set when a listing failed and was handed on as an empty one. Kept apart
+    /// from the caches for the same reason.
+    missed: Mutex<bool>,
 }
 
 impl GitHub {
@@ -176,6 +179,7 @@ impl GitHub {
             repo,
             caches: Mutex::new(Caches::default()),
             paused: Mutex::new(None),
+            missed: Mutex::new(false),
         }
     }
 
@@ -186,6 +190,26 @@ impl GitHub {
     /// "nothing is happening" and "we were not told".
     pub fn rate_limited(&self) -> Option<std::time::Duration> {
         self.paused.lock().ok().and_then(|mut held| held.take())
+    }
+
+    /// Whether a listing failed since this was last asked, clearing as it
+    /// answers.
+    ///
+    /// `rate_limited` covers the one refusal GitHub announces. This covers the
+    /// rest - a network that is not up yet, a 5xx, a token not yet readable -
+    /// which arrive as an empty list and are otherwise indistinguishable from a
+    /// repository where nothing has happened.
+    pub fn missed_a_read(&self) -> bool {
+        self.missed
+            .lock()
+            .map(|mut held| std::mem::replace(&mut *held, false))
+            .unwrap_or(false)
+    }
+
+    fn note_missed_read(&self) {
+        if let Ok(mut held) = self.missed.lock() {
+            *held = true;
+        }
     }
 
     /// Forgets what it has been told. A watcher asks the same questions on
@@ -261,6 +285,19 @@ impl GitHub {
         Ok(parsed.workflow_runs)
     }
 
+    /// Empty when the request failed, and the failure remembered. The callers
+    /// here want a list to get on with; a watcher wants to know this one was not
+    /// an answer.
+    fn runs_or_none(&self, workflow_file: &str) -> Vec<Run> {
+        match self.runs_for_workflow(workflow_file) {
+            Ok(found) => found,
+            Err(_) => {
+                self.note_missed_read();
+                Vec::new()
+            }
+        }
+    }
+
     /// Recent runs of several workflows at once. They have nothing to do with each
     /// other, so waiting for each in turn was six round trips for no reason.
     pub fn runs_for_workflows(&self, workflows: &[WorkflowRequest]) -> Vec<(usize, Vec<Run>)> {
@@ -271,12 +308,7 @@ impl GitHub {
                 let handles: Vec<_> = chunk
                     .iter()
                     .map(|request| {
-                        scope.spawn(move || {
-                            (
-                                request.index,
-                                self.runs_for_workflow(&request.file).unwrap_or_default(),
-                            )
-                        })
+                        scope.spawn(move || (request.index, self.runs_or_none(&request.file)))
                     })
                     .collect();
 
@@ -426,11 +458,13 @@ impl GitHub {
             limit: DEPLOYMENTS_PER_ENVIRONMENT,
         };
 
-        let deployments: Vec<Deployment> = self
-            .get(&route)
-            .ok()
-            .and_then(|body| serde_json::from_str(&body).ok())
-            .unwrap_or_default();
+        let deployments: Vec<Deployment> = match self.get(&route) {
+            Ok(body) => serde_json::from_str(&body).unwrap_or_default(),
+            Err(_) => {
+                self.note_missed_read();
+                Vec::new()
+            }
+        };
 
         let mut run_ids: Vec<u64> = Vec::new();
         let mut shas: Vec<(u64, String, String)> = Vec::new();

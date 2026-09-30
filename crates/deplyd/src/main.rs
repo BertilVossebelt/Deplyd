@@ -760,6 +760,14 @@ fn watch_loop(
         render::watch_opening(context, until.as_ref(), every, deadline.is_some());
     }
 
+    // Before the first look, not only after every later one. What is live is read
+    // from the clone, and a clone that has not been fetched since yesterday has
+    // never heard of the commit that went live this morning - `git log` answers
+    // empty for it, which reads as "nothing is live". The fetch at the foot of
+    // this loop then makes the second look find the lot at once, and every one of
+    // them is announced as news to every hook.
+    let _ = repo.fetch_again();
+
     loop {
         let report = match deplyd_core::report::status(
             repo,
@@ -793,9 +801,11 @@ fn watch_loop(
         }
 
         let snapshot = snapshot_of(&runs, &targets, &report);
-        match &previous {
-            None => {}
-            Some(before) => {
+        // A look that could not read is neither news nor a baseline. Kept apart
+        // from the first look, which saw everything and is quiet for a different
+        // reason: there was nothing to compare it against.
+        if look_was_whole(github) {
+            if let Some(before) = &previous {
                 for event in deplyd_core::watch::changes(before, &snapshot) {
                     render::watch_event(&event, options.json, web);
 
@@ -828,8 +838,8 @@ fn watch_loop(
                     }
                 }
             }
+            previous = Some(snapshot);
         }
-        previous = Some(snapshot);
 
         // Stamped every look, which is what tells `watchers` this one is still
         // going - and the same look picks up whatever another process wrote to
@@ -961,6 +971,20 @@ fn watch_reached(
         )),
         _ => None,
     }
+}
+
+/// Whether the look just taken saw everything it reports on.
+///
+/// deplyd reads GitHub for the runs and the clone for what is live, and both
+/// answer empty when they fail rather than saying so: a refused listing arrives
+/// as no runs at all. One such look is harmless by itself - nothing disappearing
+/// is ever an event - but absorbed as the state of the world it makes the look
+/// after it find the whole repository new, and that is one hook run per commit.
+///
+/// Asked once per look whatever the answer, so a failure is not left set to
+/// silence the look after it too.
+fn look_was_whole(github: &GitHub) -> bool {
+    !github.missed_a_read()
 }
 
 /// One look, in the shape the differ compares.

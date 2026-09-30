@@ -7,7 +7,7 @@
 mod support;
 
 use deplyd_core::context::Context;
-use deplyd_core::github::GitHub;
+use deplyd_core::github::{GitHub, WorkflowRequest};
 use deplyd_core::repo::Repo;
 use deplyd_core::settings::Settings;
 use deplyd_core::targets::{self, ShaSource};
@@ -70,6 +70,68 @@ fn runs_for(github: &GitHub, file: &str, needs_log: bool) -> Vec<deplyd_core::gi
         run.needs_log = needs_log;
     }
     runs
+}
+
+#[test]
+fn a_listing_that_was_refused_is_not_an_empty_repository() {
+    // The stub answers 404 for a workflow nobody set up, which is the shape of
+    // every failure here: an error handed on as an empty list. A watcher that
+    // took it for the truth would find the whole repository new on its next
+    // look and kick every hook once per commit of it.
+    let stub = StubGitHub::new().runs(
+        "deploy-production.yml",
+        &[StubRun::success(
+            100,
+            "2026-01-02T00:00:00Z",
+            &"a".repeat(40),
+        )],
+    );
+    let github = GitHub::new(Box::new(stub), "acme".into(), "widgets".into());
+
+    let found = github.runs_for_workflows(&[
+        WorkflowRequest {
+            index: 0,
+            file: "deploy-production.yml".into(),
+        },
+        WorkflowRequest {
+            index: 1,
+            file: "deploy-staging.yml".into(),
+        },
+    ]);
+
+    assert_eq!(found[0].1.len(), 1);
+    assert!(
+        found[1].1.is_empty(),
+        "the caller still gets a list to work with"
+    );
+    assert!(
+        github.missed_a_read(),
+        "but the look is known to be incomplete"
+    );
+    assert!(
+        !github.missed_a_read(),
+        "cleared as it answers, so one failure cannot silence every look after it"
+    );
+}
+
+#[test]
+fn a_listing_that_answered_is_not_a_missed_read() {
+    let stub = StubGitHub::new().runs(
+        "deploy-production.yml",
+        &[StubRun::success(
+            100,
+            "2026-01-02T00:00:00Z",
+            &"a".repeat(40),
+        )],
+    );
+    let github = GitHub::new(Box::new(stub), "acme".into(), "widgets".into());
+
+    github.runs_for_workflows(&[WorkflowRequest {
+        index: 0,
+        file: "deploy-production.yml".into(),
+    }]);
+
+    assert!(!github.missed_a_read());
 }
 
 #[test]
