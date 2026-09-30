@@ -8,8 +8,8 @@ use serde::Deserialize;
 
 use crate::gateway::http::{HttpError, Route, Transport};
 
-/// How far back to look. Said in the output when it bites, since silence would
-/// otherwise read as "no such target".
+/// How far back to look. Said in the output when it bites, since silence reads
+/// as "no such target".
 pub const RUNS_PER_WORKFLOW: u32 = 15;
 /// How many deployments to walk when matching runs to an environment.
 pub const DEPLOYMENTS_PER_ENVIRONMENT: u32 = 20;
@@ -166,6 +166,9 @@ pub struct GitHub {
     /// The longest pause GitHub has asked for and nobody has acted on yet.
     /// Kept apart from the caches, which `forget` empties.
     paused: Mutex<Option<std::time::Duration>>,
+    /// Set when a listing failed and was handed on as an empty one. Kept apart
+    /// from the caches for the same reason.
+    missed: Mutex<bool>,
 }
 
 impl GitHub {
@@ -176,21 +179,35 @@ impl GitHub {
             repo,
             caches: Mutex::new(Caches::default()),
             paused: Mutex::new(None),
+            missed: Mutex::new(false),
         }
     }
 
-    /// How long GitHub asked deplyd to wait, if it has, clearing it as it answers.
-    ///
-    /// Most callers treat a failed request as an empty answer, which is right for
-    /// one run and wrong for a loop: the loop has to know the difference between
-    /// "nothing is happening" and "we were not told".
+    /// How long GitHub asked deplyd to wait, clearing it as it answers. Callers
+    /// read a failed request as an empty answer, which is right for one run and
+    /// wrong for a loop.
     pub fn rate_limited(&self) -> Option<std::time::Duration> {
         self.paused.lock().ok().and_then(|mut held| held.take())
     }
 
+    /// Whether a listing failed since this was last asked, clearing as it
+    /// answers. `rate_limited` covers the refusal GitHub announces; this covers
+    /// the rest, which arrive as an empty list and look like a quiet repository.
+    pub fn missed_a_read(&self) -> bool {
+        self.missed
+            .lock()
+            .map(|mut held| std::mem::replace(&mut *held, false))
+            .unwrap_or(false)
+    }
+
+    fn note_missed_read(&self) {
+        if let Ok(mut held) = self.missed.lock() {
+            *held = true;
+        }
+    }
+
     /// Forgets what it has been told. A watcher asks the same questions on
-    /// purpose, and memoised answers would make it blind to the very thing it
-    /// is watching for.
+    /// purpose, and memoised answers would make it blind.
     pub fn forget(&self) {
         if let Ok(mut caches) = self.caches.lock() {
             *caches = Caches::default();
@@ -203,8 +220,8 @@ impl GitHub {
 
     fn get(&self, route: &Route) -> Result<String, HttpError> {
         let answer = self.http.get(route, &self.owner, &self.repo);
-        // Noticed here because it is the one place every request passes through;
-        // the callers above swallow errors into empty answers.
+        // The one place every request passes through, and the callers above
+        // swallow errors into empty answers.
         if let Err(HttpError::RateLimited { wait, .. }) = &answer
             && let Ok(mut held) = self.paused.lock()
         {
@@ -221,6 +238,30 @@ impl GitHub {
         Some(parsed.tag_name)
     }
 
+    /// What is left of the hourly allowance, and when it refills. From the
+    /// headers of a real request, since `/rate_limit` answers about a window of
+    /// its own - 5000 of 5000 while the headers count down properly.
+    pub fn quota(&self) -> Result<Quota, HttpError> {
+        if self.http.allowance().is_none() {
+            // One from each window: asking only one reported thousands left
+            // while the other was a hundred and fifty requests further on.
+            let _ = self.get(&Route::LatestRelease);
+            let _ = self.get(&Route::Deployments {
+                environment: None,
+                limit: 1,
+            });
+        }
+        let stated = self.http.allowance().ok_or_else(|| {
+            HttpError::Transport("GitHub said nothing about the allowance".into())
+        })?;
+
+        Ok(Quota {
+            limit: stated.limit,
+            remaining: stated.remaining,
+            reset: stated.reset,
+        })
+    }
+
     /// Recent runs of one workflow.
     pub fn runs_for_workflow(&self, workflow_file: &str) -> Result<Vec<Run>, HttpError> {
         let body = self.get(&Route::WorkflowRuns {
@@ -232,8 +273,20 @@ impl GitHub {
         Ok(parsed.workflow_runs)
     }
 
-    /// Recent runs of several workflows at once. They have nothing to do with each
-    /// other, so waiting for each in turn was six round trips for no reason.
+    /// Empty when the request failed, and the failure remembered: callers want a
+    /// list to get on with, a watcher wants to know this was not an answer.
+    fn runs_or_none(&self, workflow_file: &str) -> Vec<Run> {
+        match self.runs_for_workflow(workflow_file) {
+            Ok(found) => found,
+            Err(_) => {
+                self.note_missed_read();
+                Vec::new()
+            }
+        }
+    }
+
+    /// Recent runs of several workflows at once: they have nothing to do with
+    /// each other, so waiting for each in turn was six round trips.
     pub fn runs_for_workflows(&self, workflows: &[WorkflowRequest]) -> Vec<(usize, Vec<Run>)> {
         let mut collected: Vec<(usize, Vec<Run>)> = Vec::new();
 
@@ -242,12 +295,7 @@ impl GitHub {
                 let handles: Vec<_> = chunk
                     .iter()
                     .map(|request| {
-                        scope.spawn(move || {
-                            (
-                                request.index,
-                                self.runs_for_workflow(&request.file).unwrap_or_default(),
-                            )
-                        })
+                        scope.spawn(move || (request.index, self.runs_or_none(&request.file)))
                     })
                     .collect();
 
@@ -263,8 +311,7 @@ impl GitHub {
         collected
     }
 
-    /// Fetches several job logs at once. These are the large, slow requests, and the
-    /// loop that builds targets used to read them one at a time.
+    /// Several job logs at once: these are the large, slow requests.
     pub fn prefetch_logs(&self, job_ids: &[u64]) {
         let pending: Vec<u64> = {
             let Ok(caches) = self.caches.lock() else {
@@ -322,8 +369,7 @@ impl GitHub {
         jobs
     }
 
-    /// Fetches several runs' jobs at once: the call is small and the waiting is all
-    /// latency.
+    /// Several runs' jobs at once: the call is small, the waiting is latency.
     pub fn prefetch_jobs(&self, run_ids: &[u64]) {
         let pending: Vec<u64> = {
             let Ok(caches) = self.caches.lock() else {
@@ -365,9 +411,9 @@ impl GitHub {
             .unwrap_or_default()
     }
 
-    /// One job's log as plain text. Per job, not per run: the run endpoint returns a
-    /// zip of every job's log, told apart afterwards by a text column - the step that
-    /// could hand one matrix leg another's commit.
+    /// One job's log as plain text. Per job, not per run: the run endpoint sends
+    /// a zip told apart by a text column, which could hand one matrix leg
+    /// another's commit.
     pub fn job_log(&self, job_id: u64) -> Option<String> {
         if let Ok(caches) = self.caches.lock()
             && let Some(found) = caches.logs.get(&job_id)
@@ -382,9 +428,8 @@ impl GitHub {
         log
     }
 
-    /// Walks an environment's deployments, returning the run ids that created them
-    /// and recording each commit. One walk per environment; the per-deployment
-    /// statuses calls are independent, so they go together.
+    /// Walks an environment's deployments for the run ids that created them,
+    /// recording each commit. One walk per environment, statuses together.
     pub fn deployments(&self, environment: &str) -> Vec<u64> {
         if let Ok(caches) = self.caches.lock()
             && let Some(found) = caches.deployments_asked.get(environment)
@@ -397,11 +442,13 @@ impl GitHub {
             limit: DEPLOYMENTS_PER_ENVIRONMENT,
         };
 
-        let deployments: Vec<Deployment> = self
-            .get(&route)
-            .ok()
-            .and_then(|body| serde_json::from_str(&body).ok())
-            .unwrap_or_default();
+        let deployments: Vec<Deployment> = match self.get(&route) {
+            Ok(body) => serde_json::from_str(&body).unwrap_or_default(),
+            Err(_) => {
+                self.note_missed_read();
+                Vec::new()
+            }
+        };
 
         let mut run_ids: Vec<u64> = Vec::new();
         let mut shas: Vec<(u64, String, String)> = Vec::new();
@@ -495,8 +542,8 @@ impl GitHub {
         {
             return Some(found.clone());
         }
-        // With an environment named, stop rather than borrowing another one's commit:
-        // a wrong comparison reads as a real disagreement.
+        // With an environment named, stop rather than borrow another one's
+        // commit: a wrong comparison reads as a real disagreement.
         if !environment.is_empty() {
             return None;
         }
@@ -521,6 +568,84 @@ fn run_id_from_log_url(url: &str) -> Option<u64> {
     let (_, tail) = url.split_once("/actions/runs/")?;
     let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
     digits.parse().ok()
+}
+
+/// The account's hourly allowance for ordinary API reads.
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
+pub struct Quota {
+    pub limit: u32,
+    pub remaining: u32,
+    /// Unix time at which the allowance refills.
+    pub reset: i64,
+}
+
+impl Quota {
+    pub fn used(&self) -> u32 {
+        self.limit.saturating_sub(self.remaining)
+    }
+
+    /// 0.0 to 1.0. A limit of zero is not a real answer, so it reads as spent.
+    pub fn spent(&self) -> f64 {
+        if self.limit == 0 {
+            return 1.0;
+        }
+        f64::from(self.used()) / f64::from(self.limit)
+    }
+
+    /// How long until it refills, or None once that moment has passed.
+    pub fn refills_in(&self) -> Option<std::time::Duration> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_secs() as i64;
+        let left = self.reset - now;
+        (left > 0).then(|| std::time::Duration::from_secs(left as u64))
+    }
+}
+
+#[cfg(test)]
+mod quota_tests {
+    use super::Quota;
+
+    fn at(limit: u32, remaining: u32) -> Quota {
+        Quota {
+            limit,
+            remaining,
+            reset: 0,
+        }
+    }
+
+    #[test]
+    fn what_is_spent_is_what_is_gone() {
+        let quota = at(5000, 4000);
+        assert_eq!(quota.used(), 1000);
+        assert!((quota.spent() - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_limit_of_nothing_reads_as_spent_rather_than_dividing_by_zero() {
+        let quota = at(0, 0);
+        assert_eq!(quota.used(), 0);
+        assert!((quota.spent() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn more_remaining_than_the_limit_does_not_wrap() {
+        // Not a shape GitHub sends; saturating_sub keeps it from reading as
+        // four billion used.
+        let quota = at(10, 99);
+        assert_eq!(quota.used(), 0);
+    }
+
+    #[test]
+    fn a_reset_already_past_is_no_wait_at_all() {
+        let quota = Quota {
+            limit: 5000,
+            remaining: 0,
+            reset: 1,
+        };
+        assert_eq!(quota.refills_in(), None);
+    }
 }
 
 #[cfg(test)]

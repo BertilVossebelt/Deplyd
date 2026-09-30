@@ -1,9 +1,8 @@
 //! The command line. A verb says what to do, a flag says how.
 //!
-//! Options hang off the verbs that use them rather than off the root, so
-//! `--help` for a verb lists what that verb will actually do something with.
-//! `main` still wants them in one place, so [`Command::options`] gathers them
-//! back up, filling in the default for anything the verb never offered.
+//! Options hang off the verbs that use them, so a verb's `--help` lists what it
+//! will act on. [`Command::options`] gathers them back up for `main`, filling in
+//! the default for anything the verb never offered.
 
 use clap::builder::styling::Styles;
 use clap::{Args, Parser, Subcommand};
@@ -13,9 +12,8 @@ use crate::term;
 /// How many changes a listing shows when nothing says otherwise.
 pub const DEFAULT_TAKE: u32 = 10;
 
-/// The help wearing the same palette as the reports, rather than a second one
-/// of its own. clap's default is bold and underline only, so without this the
-/// help is the one colourless thing deplyd prints.
+/// The help in the same palette as the reports: clap's default is bold and
+/// underline only, so the help was the one colourless thing deplyd printed.
 fn styles() -> Styles {
     Styles::styled()
         .header(term::ACCENT)
@@ -111,7 +109,7 @@ pub struct ReportOptions {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// The last deployed commit, and your changes in it
+    /// What each target is running, what is pending, and your changes in it
     #[command(infer_subcommands = true)]
     Status {
         /// Narrow it to one pull request or one commit
@@ -125,9 +123,9 @@ pub enum Command {
     /// Watch for deploys, and for changes going live
     #[command(infer_subcommands = true)]
     Watch {
-        /// Stop once that pull request or commit is live
+        /// What to wait for, or which background watcher to act on
         #[command(subcommand)]
-        change: Option<Change>,
+        action: Option<WatchAction>,
 
         /// Stop after this long, e.g. 30m or 2h
         #[arg(long = "for", global = true, value_name = "DURATION")]
@@ -136,6 +134,19 @@ pub enum Command {
         /// How often to look, default 60s
         #[arg(long = "every", global = true, value_name = "DURATION")]
         every: Option<String>,
+
+        /// Let go of the terminal and keep watching. deplyd list watchers lists them
+        #[arg(short = 'B', long = "background", global = true)]
+        background: bool,
+
+        /// Also start this watch when the machine starts. Implies --background
+        #[arg(long = "at-startup", global = true)]
+        at_startup: bool,
+
+        /// Hidden: set on the copy that background starts, so it knows it is the
+        /// one doing the watching rather than the one asking for it.
+        #[arg(long = "watcher-id", hide = true, global = true, value_name = "ID")]
+        watcher_id: Option<String>,
 
         #[command(flatten)]
         options: ReportOptions,
@@ -161,13 +172,23 @@ pub enum Command {
         filters: FilterOptions,
     },
 
-    /// Keep a default author, environment or repo
+    /// Register or test the scripts a watcher kicks
+    #[command(infer_subcommands = true, arg_required_else_help = false)]
+    Hooks {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+
+    /// Keep a default author, environment, repo, depth or every
     Remember {
-        /// author, environment or repo
+        /// author, environment, repo, depth or every
         what: Option<String>,
         /// The value to remember
         value: Option<String>,
     },
+
+    /// What is left of GitHub's hourly allowance
+    Quota,
 
     /// Prove it can only read
     Check,
@@ -184,9 +205,8 @@ pub enum Command {
         shell: clap_complete::Shell,
     },
 
-    /// Bare names for the shell to complete against.
-    ///
-    /// Hidden: the shell calls it, people do not.
+    /// Bare names for the shell to complete against. Hidden: the shell calls it,
+    /// people do not.
     #[command(hide = true)]
     Complete {
         /// environments or authors
@@ -215,12 +235,102 @@ pub enum Change {
 }
 
 #[derive(Debug, Subcommand, Clone)]
+pub enum StartupAction {
+    /// Stop it starting at boot. The file stays; deplyd does not delete
+    Disable {
+        /// The id, or enough of it to be unambiguous
+        id: Option<String>,
+    },
+    /// Start it at boot again
+    Enable {
+        /// The id, or enough of it to be unambiguous
+        id: Option<String>,
+    },
+    /// What the machine calls at boot. The shell calls it, people do not
+    #[command(hide = true)]
+    Run { id: Option<String> },
+}
+
+/// What `watch` was asked to do. `pr` and `commit` repeat what `status` takes
+/// rather than sharing its enum: `stop` and `log` mean nothing under `status`.
+#[derive(Debug, Subcommand, Clone)]
+pub enum WatchAction {
+    /// One pull request
+    Pr {
+        /// The pull request number
+        number: Option<String>,
+    },
+
+    /// One commit: a sha, branch, tag or HEAD
+    Commit {
+        /// A sha, branch, tag or HEAD
+        reference: Option<String>,
+    },
+
+    /// Ask a background watcher to stop. It notices on its next look
+    Stop {
+        /// The id, or enough of it to be unambiguous
+        id: Option<String>,
+    },
+
+    /// What a background watcher last said
+    Log {
+        /// The id, or enough of it to be unambiguous
+        id: Option<String>,
+    },
+
+    /// Watches that come back when the machine does
+    #[command(infer_subcommands = true, arg_required_else_help = false)]
+    Startup {
+        #[command(subcommand)]
+        action: Option<StartupAction>,
+    },
+}
+
+impl WatchAction {
+    /// The change it is waiting for, where there is one.
+    pub fn change(&self) -> Option<Change> {
+        match self {
+            WatchAction::Pr { number } => Some(Change::Pr {
+                number: number.clone(),
+            }),
+            WatchAction::Commit { reference } => Some(Change::Commit {
+                reference: reference.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum HookAction {
+    /// Register a script
+    Add {
+        /// Path to the script
+        path: String,
+    },
+    /// Stop kicking a script. It is not deleted.
+    Remove {
+        /// Path as `deplyd list hooks` lists it
+        path: String,
+    },
+    /// Run every hook once with a made-up event, to see what they do
+    Test,
+}
+
+#[derive(Debug, Subcommand, Clone)]
 pub enum ListWhat {
     /// Names that -A accepts
     Authors,
 
     /// Environments that -E accepts
     Environments,
+
+    /// What is watching in the background
+    Watchers,
+
+    /// Scripts a watcher kicks when something happens
+    Hooks,
 }
 
 #[derive(Debug, Subcommand, Clone)]
@@ -311,20 +421,36 @@ impl Command {
                 Some(Change::Pr { .. }) => "status pr",
                 Some(Change::Commit { .. }) => "status commit",
             },
-            Command::Watch { change, .. } => match change {
+            Command::Watch { action, .. } => match action {
                 None => "watch",
-                Some(Change::Pr { .. }) => "watch pr",
-                Some(Change::Commit { .. }) => "watch commit",
+                Some(WatchAction::Pr { .. }) => "watch pr",
+                Some(WatchAction::Commit { .. }) => "watch commit",
+                Some(WatchAction::Stop { .. }) => "watch stop",
+                Some(WatchAction::Log { .. }) => "watch log",
+                Some(WatchAction::Startup { action }) => match action {
+                    None => "watch startup",
+                    Some(StartupAction::Disable { .. }) => "watch startup disable",
+                    Some(StartupAction::Enable { .. }) => "watch startup enable",
+                    Some(StartupAction::Run { .. }) => "watch startup run",
+                },
             },
             Command::List { what, .. } => match what {
                 ListWhat::Authors => "list authors",
                 ListWhat::Environments => "list environments",
+                ListWhat::Watchers => "list watchers",
+                ListWhat::Hooks => "list hooks",
             },
             Command::Config { action, .. } => match action {
                 None => "config",
                 Some(ConfigAction::Init { .. }) => "config init",
             },
+            Command::Hooks { action } => match action {
+                HookAction::Add { .. } => "hooks add",
+                HookAction::Remove { .. } => "hooks remove",
+                HookAction::Test => "hooks test",
+            },
             Command::Remember { .. } => "remember",
+            Command::Quota => "quota",
             Command::Check => "check",
             Command::Update => "update",
             Command::Uninstall => "uninstall",
@@ -348,6 +474,55 @@ pub fn read_pull_request_number(value: Option<&String>) -> Result<u32, String> {
         Ok(number) if number > 0 => Ok(number),
         _ => Err(format!("Not a pull request number: {text}")),
     }
+}
+
+/// Whether this command line should hand the watch to a detached copy. Its own
+/// function so it can be tested without starting anything: getting it wrong is
+/// deplyd spawning deplyd until something stops it.
+pub fn should_detach(command: &Command) -> bool {
+    match command {
+        Command::Watch {
+            background,
+            at_startup,
+            watcher_id,
+            ..
+        } => (*background || *at_startup) && watcher_id.is_none(),
+        _ => false,
+    }
+}
+
+/// The command line a boot-time entry should remember. `--at-startup` goes, or
+/// every boot registers another; `--background` stays, or boot starts a watch
+/// with nothing in `deplyd list watchers` and no way to stop it. The repo is
+/// pinned, since a machine starting up is in no directory in particular.
+pub fn args_for_startup(given: &[String], repo_root: &str) -> Vec<String> {
+    // --watcher-id goes too: it names one run, and a boot that replayed it would
+    // beat against a record belonging to a watcher that stopped months ago.
+    let mut args: Vec<String> = Vec::new();
+    let mut skip_next = false;
+    for arg in given {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        match arg.as_str() {
+            "--at-startup" => {}
+            "--watcher-id" => skip_next = true,
+            _ => args.push(arg.clone()),
+        }
+    }
+
+    if !args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--background" | "-B"))
+    {
+        args.push("--background".into());
+    }
+    if !args.iter().any(|arg| arg == "--repo-path") {
+        args.push("--repo-path".into());
+        args.push(repo_root.into());
+    }
+    args
 }
 
 #[cfg(test)]
@@ -405,6 +580,106 @@ mod tests {
     }
 
     #[test]
+    fn what_boot_remembers_can_be_found_and_stopped_again() {
+        let given: Vec<String> = ["watch", "-E", "production", "--at-startup"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let kept = args_for_startup(&given, "/repo");
+
+        assert!(
+            !kept.iter().any(|arg| arg == "--at-startup"),
+            "or every boot would register another one: {kept:?}"
+        );
+        assert!(
+            kept.iter().any(|arg| arg == "--background"),
+            "without it boot starts a watch with no record, which nothing can              list or stop: {kept:?}"
+        );
+        assert!(kept.iter().any(|arg| arg == "--repo-path"), "{kept:?}");
+        assert!(kept.iter().any(|arg| arg == "/repo"), "{kept:?}");
+
+        // What it was asked to watch survives.
+        assert!(kept.iter().any(|arg| arg == "production"), "{kept:?}");
+    }
+
+    #[test]
+    fn boot_does_not_inherit_one_run_s_identity() {
+        // --watcher-id names a single run. Replayed at boot it would stamp a
+        // record made months ago, so the new watcher would be invisible.
+        let given: Vec<String> = ["watch", "--watcher-id", "abc123", "--at-startup"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let kept = args_for_startup(&given, "/repo");
+
+        assert!(
+            !kept.iter().any(|arg| arg == "--watcher-id"),
+            "the flag must go: {kept:?}"
+        );
+        assert!(
+            !kept.iter().any(|arg| arg == "abc123"),
+            "and its value with it, or clap reads it as something else: {kept:?}"
+        );
+        assert!(kept.iter().any(|arg| arg == "--background"), "{kept:?}");
+    }
+
+    #[test]
+    fn boot_does_not_repeat_what_was_already_given() {
+        let given: Vec<String> = ["watch", "-B", "--repo-path", "/elsewhere"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let kept = args_for_startup(&given, "/repo");
+
+        assert_eq!(
+            kept.iter().filter(|a| a.as_str() == "--repo-path").count(),
+            1,
+            "two of them and clap takes the wrong one: {kept:?}"
+        );
+        assert!(
+            !kept.iter().any(|arg| arg == "--background"),
+            "-B is already the same thing: {kept:?}"
+        );
+        assert!(kept.iter().any(|arg| arg == "/elsewhere"), "{kept:?}");
+    }
+
+    #[test]
+    fn a_watcher_never_asks_for_another_watcher() {
+        // The child is started with the same line minus the flags, but the id
+        // settles it: whatever survives, a copy that knows its own name must not
+        // spawn a third. Getting this wrong is deplyd starting deplyd for ever.
+        let asked = Cli::try_parse_from(["deplyd", "watch", "--background"]).expect("shape");
+        assert!(should_detach(&asked.command), "the one you typed");
+
+        let child =
+            Cli::try_parse_from(["deplyd", "watch", "--watcher-id", "abc123"]).expect("shape");
+        assert!(!should_detach(&child.command), "the one it started");
+
+        // Even carrying the flags it was started from.
+        let confused = Cli::try_parse_from([
+            "deplyd",
+            "watch",
+            "--background",
+            "--at-startup",
+            "--watcher-id",
+            "abc123",
+        ])
+        .expect("shape");
+        assert!(
+            !should_detach(&confused.command),
+            "the id has to win over the flags, or the flags spawn for ever"
+        );
+
+        // And --at-startup alone still detaches: it implies the background.
+        let booted = Cli::try_parse_from(["deplyd", "watch", "--at-startup"]).expect("shape");
+        assert!(should_detach(&booted.command));
+
+        // Nothing else detaches, whatever it is given.
+        let plain = Cli::try_parse_from(["deplyd", "status"]).expect("shape");
+        assert!(!should_detach(&plain.command));
+    }
+
+    #[test]
     fn the_command_line_parses_the_documented_shapes() {
         let parsed =
             Cli::try_parse_from(["deplyd", "status", "pr", "412", "-E", "production", "-J"])
@@ -415,7 +690,7 @@ mod tests {
         let watching = Cli::try_parse_from(["deplyd", "watch", "pr", "412", "--for", "2h"])
             .expect("documented shape");
         let Command::Watch {
-            change: Some(Change::Pr { number }),
+            action: Some(WatchAction::Pr { number }),
             duration,
             ..
         } = watching.command
@@ -424,6 +699,26 @@ mod tests {
         };
         assert_eq!(number.as_deref(), Some("412"));
         assert_eq!(duration.as_deref(), Some("2h"));
+
+        // Watching and managing a watcher are the same verb now.
+        for (line, name) in [
+            (vec!["deplyd", "watch", "stop", "abc"], "watch stop"),
+            (vec!["deplyd", "watch", "log", "abc"], "watch log"),
+            (vec!["deplyd", "watch", "startup"], "watch startup"),
+            (
+                vec!["deplyd", "watch", "startup", "disable", "abc"],
+                "watch startup disable",
+            ),
+            (vec!["deplyd", "list", "watchers"], "list watchers"),
+            (vec!["deplyd", "list", "hooks"], "list hooks"),
+        ] {
+            let parsed = Cli::try_parse_from(&line).unwrap_or_else(|e| panic!("{line:?}: {e}"));
+            assert_eq!(parsed.command.name(), name, "{line:?}");
+        }
+
+        // And the spellings they replaced are gone.
+        assert!(Cli::try_parse_from(["deplyd", "watchers"]).is_err());
+        assert!(Cli::try_parse_from(["deplyd", "startup"]).is_err());
 
         // Commands shorten while they stay unambiguous, at both levels.
         let short = Cli::try_parse_from(["deplyd", "li", "env"]).expect("list env should infer");

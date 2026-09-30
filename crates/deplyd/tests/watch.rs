@@ -187,3 +187,52 @@ fn a_remembered_interval_is_used_and_the_flag_still_wins() {
         "the flag should beat the kept default, got:\n{flagged}"
     );
 }
+
+#[test]
+fn a_background_watcher_that_stops_early_closes_its_record() {
+    // The child is started with a record already written, then finds nothing
+    // to watch and stops before its loop. The record must say so: one that
+    // still reads as running would sit in `list watchers` with a pid that is
+    // gone, and `watch stop` would wait an interval on nothing.
+    let sandbox = Sandbox::empty();
+    sandbox.workflow("deploy-production.yml", API_WORKFLOW);
+    sandbox.write("services/api/one.txt", "one");
+    sandbox.commit("feat: the first thing (#101)");
+    sandbox.set_origin("acme/widgets");
+    // No runs stubbed, so the first look finds no deploys at all.
+
+    let id = "abc123def456";
+    let records = sandbox.config_directory().join("watchers");
+    std::fs::create_dir_all(&records).expect("watchers directory");
+    let record = records.join(format!("{id}.json"));
+    std::fs::write(
+        &record,
+        format!(
+            "{{\"id\":\"{id}\",\"pid\":0,\"repo\":\"{}\",\"every_secs\":10,\
+             \"started_at\":1,\"last_seen\":1,\"log\":\"\"}}",
+            sandbox.repo().display().to_string().replace('\\', "/")
+        ),
+    )
+    .expect("record");
+
+    let (output, code) = sandbox.deplyd_stubbed(&[
+        "watch",
+        "--watcher-id",
+        id,
+        "--every",
+        "10s",
+        "-A",
+        "Ada Lovelace",
+    ]);
+    assert_eq!(code, 1, "nothing to watch is a stop, got:\n{output}");
+    assert!(
+        output.contains("No production deploy runs found"),
+        "it should say why it stopped, got:\n{output}"
+    );
+
+    let after = std::fs::read_to_string(&record).expect("the record should still be there");
+    assert!(
+        after.contains("\"stopped_at\": 1") || after.contains("\"stopped_at\":1"),
+        "the record should be closed off, got:\n{after}"
+    );
+}

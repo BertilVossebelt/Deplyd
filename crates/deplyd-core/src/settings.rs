@@ -39,6 +39,10 @@ pub struct Settings {
     pub watch_every: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth: Option<u32>,
+    /// Scripts to kick when a watcher sees something happen, in the order they
+    /// were added. What they do is the user's business.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<String>,
 }
 
 impl Settings {
@@ -79,9 +83,8 @@ pub struct Override {
     /// Substrings of a job name that keep it from being a target.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignore_jobs: Vec<String>,
-    /// Substrings of a job name that make it a target even with no evidence it
-    /// ships. The way back in when detection is too strict, and the reason it
-    /// can afford to be: a miss costs one line here.
+    /// Substrings of a job name that make it a target with no evidence it ships.
+    /// The way back in when detection is too strict, and why it can afford to be.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub target_jobs: Vec<String>,
     /// Which paths a target covers, when its job sets no `working-directory`.
@@ -91,9 +94,8 @@ pub struct Override {
 }
 
 impl Override {
-    /// `Ok(None)` when there is no file, `Err` when there is one that will not parse.
-    /// Ignoring a broken one would drop the corrections it exists to hold and say
-    /// nothing about it.
+    /// `Ok(None)` when there is no file, `Err` when one will not parse: ignoring
+    /// a broken one drops the corrections it exists to hold, silently.
     pub fn load(path: &Path) -> Result<Option<Self>, String> {
         let Ok(text) = std::fs::read_to_string(path) else {
             return Ok(None);
@@ -126,9 +128,8 @@ pub fn override_location(repo_root: &Path) -> OverrideLocation {
     }
 }
 
-/// Named after the repository plus a short hash of its path, so two clones sharing
-/// a name stay apart. The path is normalised first: git answers in forward slashes
-/// while `--repo-path` arrives in backslashes. The hash is not cryptographic.
+/// The repository plus a short hash of its path, so two clones sharing a name
+/// stay apart. Normalised first, since git and `--repo-path` disagree on slashes.
 fn private_override_path(repo_root: &Path) -> PathBuf {
     let mut full = repo_root.to_string_lossy().replace('\\', "/");
     while full.ends_with('/') {
@@ -174,8 +175,8 @@ pub fn write_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
     }
     let mut text = serde_json::to_string_pretty(value)
         .map_err(|error| std::io::Error::other(error.to_string()))?;
-    // A line feed, not the platform's terminator: the body is joined with line feeds,
-    // so a platform-dependent ending would put a difference in the last byte alone.
+    // A line feed, not the platform's: the body is joined with line feeds, so the
+    // last byte would be the only difference.
     text.push('\n');
     std::fs::write(path, text)
 }

@@ -30,10 +30,30 @@ impl Output {
     }
 }
 
+/// Something to do on the way out, whichever of the many stops is taken.
+///
+/// A background watcher has a record other processes read, and `stop` is
+/// called from dozens of places between its start and its loop - no runs, no
+/// targets, an environment that stopped existing. Marking the record from each
+/// would miss one; marking it here misses none. Set once, by the watcher.
+static BEFORE_LEAVING: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> =
+    std::sync::OnceLock::new();
+
+pub fn before_leaving(what: impl Fn() + Send + Sync + 'static) {
+    let _ = BEFORE_LEAVING.set(Box::new(what));
+}
+
+fn leave(code: i32) -> ! {
+    if let Some(what) = BEFORE_LEAVING.get() {
+        what();
+    }
+    std::process::exit(code);
+}
+
 /// Always exit 1: deplyd could not run, which is never a verdict.
 pub fn stop(message: &str, hints: &[String]) -> ! {
     refuse(message, hints);
-    std::process::exit(1);
+    leave(1);
 }
 
 /// The same, but it returns, so a caller that owes the shell a different exit
@@ -185,9 +205,8 @@ fn verdict_line(
 
     let (short, committed, subject) = commit_parts(repo, &target.sha);
 
-    // The deploy's time, not the commit's. "When did this go live" is the
-    // question; how old the code is answers a different one. The commit's date
-    // stands in only when GitHub told us nothing usable.
+    // The deploy's time, not the commit's: "when did this go live" is the
+    // question. The commit's date stands in only when GitHub said nothing.
     let when = deplyd_core::when::local_minute(&target.deployed_at).unwrap_or(committed);
 
     let linked = term::link(&short, &web.commit(&target.sha));
@@ -927,6 +946,329 @@ fn now_hms() -> String {
         .unwrap_or(0);
     let day = seconds % 86_400;
     format!("{:02}:{:02}:{:02}", day / 3600, (day % 3600) / 60, day % 60)
+}
+
+/// How much of the hourly allowance is left, as a bar and a number. Worth
+/// showing because watching spends it: a look costs a request per deploy
+/// workflow, and a watcher left overnight is what runs an account dry.
+pub fn quota(quota: &deplyd_core::github::Quota) {
+    const WIDTH: usize = 28;
+
+    let spent = quota.spent();
+    let filled = ((spent * WIDTH as f64).round() as usize).min(WIDTH);
+    let style = match spent {
+        s if s >= 0.90 => BAD,
+        s if s >= 0.70 => WARN,
+        _ => OK,
+    };
+
+    // Solid blocks where the terminal can draw them, hashes where it cannot.
+    let (full, empty) = if term::links_supported() {
+        ("\u{2588}", "\u{2591}")
+    } else {
+        ("#", "-")
+    };
+
+    println!();
+    println!(
+        "  {style}{}{style:#}{DIM}{}{DIM:#}  {}/{} left at worst",
+        full.repeat(filled),
+        empty.repeat(WIDTH - filled),
+        quota.remaining,
+        quota.limit
+    );
+
+    match quota.refills_in() {
+        Some(left) => println!("  {DIM}refills in {}{DIM:#}", spell_duration(left)),
+        None => println!("  {DIM}refills any moment{DIM:#}"),
+    }
+    println!();
+}
+
+/// "23m", "1h 4m", "45s". Long enough to plan around, short enough to skim.
+pub fn spell_duration(left: std::time::Duration) -> String {
+    let seconds = left.as_secs();
+    let (hours, minutes, rest) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else if minutes > 0 {
+        format!("{minutes}m")
+    } else {
+        format!("{rest}s")
+    }
+}
+
+/// The registered hooks, and where they live.
+pub fn hooks(paths: &[String]) {
+    println!();
+    if paths.is_empty() {
+        println!("{DIM}No hooks. A watcher has nothing to kick.{DIM:#}");
+        println!();
+        println!("  {OK}deplyd hooks add <script>{OK:#}");
+        println!(
+            "  {DIM}It is handed one JSON event on stdin, every time something happens.{DIM:#}"
+        );
+        println!();
+        return;
+    }
+
+    println!("{ACCENT}Hooks ({}){ACCENT:#}", paths.len());
+    for path in paths {
+        let there = std::path::Path::new(path).is_file();
+        let (mark, style) = if there {
+            (term::glyphs().ok, OK)
+        } else {
+            (term::glyphs().bad, BAD)
+        };
+        println!("  {style}{mark}{style:#}  {path}");
+        if !there {
+            println!("     {BAD}no longer there, so it will be skipped{BAD:#}");
+        }
+    }
+    println!();
+    println!("{DIM}Each is started with one JSON event on stdin, never through a shell.{DIM:#}");
+    println!();
+}
+
+/// What came of kicking them. `loud` prints a heading; a watcher passes false,
+/// because it is already printing a stream and a heading per event would bury it.
+pub fn hook_results(results: &[(String, Result<String, String>)], loud: bool) {
+    if loud {
+        println!();
+        println!("{ACCENT}Kicked {} hook(s){ACCENT:#}", results.len());
+    }
+    let mark = term::glyphs();
+    for (path, outcome) in results {
+        match outcome {
+            Ok(_) => println!("  {OK}{}{OK:#}  {DIM}{path}{DIM:#}", mark.ok),
+            Err(why) => println!("  {BAD}{}{BAD:#}  {path}\n     {BAD}{why}{BAD:#}", mark.bad),
+        }
+    }
+    if loud {
+        println!();
+    }
+}
+
+/// A note and a stop that is not a failure: something was done, and here is the
+/// state it left behind.
+pub fn stop_free(message: &str, hooks: &[String]) -> ! {
+    println!();
+    println!("{OK}{message}{OK:#}");
+    if hooks.is_empty() {
+        println!();
+        println!("{DIM}No hooks left.{DIM:#}");
+    } else {
+        println!();
+        for path in hooks {
+            println!("{DIM}  {path}{DIM:#}");
+        }
+    }
+    println!();
+    let _ = std::io::stdout().flush();
+    leave(0);
+}
+
+/// What is watching in the background, and what has finished.
+pub fn watchers(held: &[deplyd_core::watchers::Watcher]) {
+    use deplyd_core::watchers::State;
+
+    println!();
+    if held.is_empty() {
+        println!("{DIM}Nothing watching in the background.{DIM:#}");
+        println!();
+        println!("  {OK}deplyd watch --background{OK:#}");
+        println!();
+        return;
+    }
+
+    // Finished records are kept a month, and the newest ten longer, so there
+    // can be dozens. Everything still running, and enough of what finished to
+    // be useful.
+    const FINISHED_SHOWN: usize = 3;
+
+    let (live, finished): (Vec<_>, Vec<_>) = held.iter().partition(|w| w.is_live());
+    let shown: Vec<_> = live
+        .iter()
+        .chain(finished.iter().take(FINISHED_SHOWN))
+        .collect();
+    let hidden = finished.len().saturating_sub(FINISHED_SHOWN);
+
+    println!("{ACCENT}Watchers ({} running){ACCENT:#}", live.len());
+
+    let mark = term::glyphs();
+    for watcher in shown {
+        let (glyph, style, said) = match watcher.state() {
+            State::Running => (mark.ok, OK, "running".to_string()),
+            State::Stopping => (mark.warn, WARN, "stopping".to_string()),
+            State::Stopped => (mark.dot, DIM, "stopped".to_string()),
+            State::Lost => (mark.bad, BAD, "went quiet".to_string()),
+        };
+        let whose = if watcher.author.is_empty() {
+            "everyone".to_string()
+        } else {
+            watcher.author.clone()
+        };
+        let where_ = if watcher.environment.is_empty() {
+            String::new()
+        } else {
+            format!("{} - ", watcher.environment)
+        };
+
+        println!(
+            "  {style}{glyph} {:<10}{style:#} {:<10} {DIM}{where_}{whose}, every {}{DIM:#}",
+            watcher.id,
+            said,
+            spell_duration(std::time::Duration::from_secs(watcher.every_secs))
+        );
+        println!("     {DIM}{}{DIM:#}", watcher.repo);
+    }
+
+    println!();
+    if hidden > 0 {
+        println!(
+            "{DIM}{hidden} more finished, in {}{DIM:#}",
+            deplyd_core::watchers::directory().display()
+        );
+    }
+    println!("{DIM}deplyd watch stop <id>, deplyd watch log <id>{DIM:#}");
+    println!();
+}
+
+pub fn watcher_started(watcher: &deplyd_core::watchers::Watcher) {
+    println!();
+    println!(
+        "{OK}Watching in the background{OK:#}  {DIM}{}{DIM:#}",
+        watcher.id
+    );
+    println!();
+    println!(
+        "  {DIM}every {}{DIM:#}",
+        spell_duration(std::time::Duration::from_secs(watcher.every_secs))
+    );
+    println!("  {DIM}saying what it sees into {}{DIM:#}", watcher.log);
+    println!();
+    println!("  {OK}deplyd list watchers{OK:#}{DIM}            what is running{DIM:#}");
+    println!(
+        "  {OK}deplyd watch stop {}{OK:#}{DIM}  when you have had enough{DIM:#}",
+        watcher.id
+    );
+    println!();
+}
+
+pub fn watcher_stopping(watcher: &deplyd_core::watchers::Watcher) {
+    println!();
+    println!("{OK}Asked {} to stop{OK:#}", watcher.id);
+    println!();
+    println!(
+        "  {DIM}It notices on its next look, so up to {} from now.{DIM:#}",
+        spell_duration(std::time::Duration::from_secs(watcher.every_secs))
+    );
+    println!("  {DIM}deplyd never kills anything; it asks and the watcher goes.{DIM:#}");
+    println!();
+}
+
+/// The tail of what one watcher said. The first question about a watcher that
+/// stopped is always what it last printed.
+pub fn watcher_log(watcher: &deplyd_core::watchers::Watcher) {
+    const LINES: usize = 40;
+
+    println!();
+    println!(
+        "{ACCENT}{}{ACCENT:#}  {DIM}{}{DIM:#}",
+        watcher.id, watcher.log
+    );
+    println!();
+
+    let Ok(text) = std::fs::read_to_string(&watcher.log) else {
+        println!("  {DIM}Nothing written yet.{DIM:#}");
+        println!();
+        return;
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let from = lines.len().saturating_sub(LINES);
+    if from > 0 {
+        println!("  {DIM}... {from} earlier line(s){DIM:#}");
+    }
+    for line in &lines[from..] {
+        println!("  {line}");
+    }
+    println!();
+}
+
+/// What comes back when the machine does.
+pub fn startup_entries(
+    entries: &[deplyd_core::startup::Entry],
+    location: Option<std::path::PathBuf>,
+) {
+    println!();
+    if entries.is_empty() {
+        println!("{DIM}Nothing starts at boot.{DIM:#}");
+        println!();
+        println!("  {OK}deplyd watch --at-startup{OK:#}");
+        println!();
+        return;
+    }
+
+    let on = entries.iter().filter(|entry| entry.enabled).count();
+    println!("{ACCENT}At startup ({on} on){ACCENT:#}");
+
+    let mark = term::glyphs();
+    for entry in entries {
+        let (glyph, style, said) = if entry.enabled {
+            (mark.ok, OK, "on")
+        } else {
+            (mark.dot, DIM, "off")
+        };
+        println!(
+            "  {style}{glyph} {:<10}{style:#} {:<4} {DIM}{}{DIM:#}",
+            entry.id, said, entry.repo
+        );
+        println!("     {DIM}{}{DIM:#}", entry.os_file);
+    }
+
+    println!();
+    if let Some(location) = location {
+        println!("{DIM}This machine looks in {}{DIM:#}", location.display());
+    }
+    println!("{DIM}deplyd watch startup disable <id> stops one without deleting anything.{DIM:#}");
+    println!();
+}
+
+pub fn startup_registered(entry: &deplyd_core::startup::Entry) {
+    println!();
+    println!(
+        "{OK}It will start at boot too{OK:#}  {DIM}{}{DIM:#}",
+        entry.id
+    );
+    println!();
+    println!("  {DIM}{}{DIM:#}", entry.os_file);
+    println!();
+}
+
+/// It was already asked for. Said rather than silently done again, because the
+/// file deplyd would have written cannot be taken back.
+pub fn startup_already(entry: &deplyd_core::startup::Entry) {
+    println!();
+    println!("{OK}Already starts at boot{OK:#}  {DIM}{}{DIM:#}", entry.id);
+    println!();
+    println!("  {DIM}{}{DIM:#}", entry.os_file);
+    println!("  {DIM}Nothing new was written; deplyd watch startup lists them.{DIM:#}");
+    println!();
+}
+
+pub fn startup_changed(entry: &deplyd_core::startup::Entry) {
+    println!();
+    if entry.enabled {
+        println!("{OK}{} starts at boot again{OK:#}", entry.id);
+        println!();
+    } else {
+        println!("{OK}{} will not start at boot{OK:#}", entry.id);
+        println!();
+        println!("  {DIM}The file stays where it is; deplyd does not delete.{DIM:#}");
+        println!("  {DIM}{}{DIM:#}", entry.os_file);
+        println!("  {DIM}Remove it by hand if you want it gone for good.{DIM:#}");
+        println!();
+    }
 }
 
 #[cfg(test)]

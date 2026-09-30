@@ -2,9 +2,7 @@
 //! reach a remote.
 //!
 //! The one place in this crate's tests allowed to start a process, mirroring the
-//! gateway's role in `src/`. `guard_sandbox.rs` fails if any other test file spawns
-//! anything, which is how this module came to exist: the first version of `cli.rs`
-//! spawned directly and the guard caught it.
+//! gateway's role in `src/`. `guard_sandbox.rs` fails if any other test spawns.
 
 #![allow(dead_code)]
 
@@ -51,6 +49,12 @@ impl Sandbox {
 
     pub fn repo(&self) -> PathBuf {
         self.root.join("repo")
+    }
+
+    /// Where deplyd keeps its own files when run in here: every spawn points
+    /// both the unix and the Windows config variable at the sandbox home.
+    pub fn config_directory(&self) -> PathBuf {
+        self.root.join("home").join("deplyd")
     }
 
     /// Runs the built binary and returns stdout and stderr together, which is what a

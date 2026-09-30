@@ -1,9 +1,7 @@
 //! Turning GitHub's timestamps into the one deplyd prints.
 //!
-//! Every date on screen has to read in the same zone, or a column of them
-//! cannot be compared. Git is asked for its dates with `--date=format-local`;
-//! these arrive from the API as UTC, so they are converted here rather than
-//! shown as they came.
+//! Every date on screen has to read in one zone or a column of them cannot be
+//! compared. Git is asked for `--date=format-local`; these arrive as UTC.
 
 use chrono::{DateTime, Local};
 

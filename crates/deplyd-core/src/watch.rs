@@ -1,8 +1,7 @@
 //! What changed between two looks at the same repository.
 //!
-//! Nothing here polls, waits or prints. A caller takes a [`Snapshot`] whenever it
-//! likes and asks what is new since the last one, which is what makes the deciding
-//! part of watching testable without a network or a clock.
+//! Nothing here polls, waits or prints, which is what makes the deciding part
+//! of watching testable without a network or a clock.
 
 use std::collections::BTreeMap;
 
@@ -39,8 +38,8 @@ pub struct LiveChange {
     pub label: String,
 }
 
-/// One look at the repository. Ordered maps, so two snapshots compare and print
-/// in the same order every time rather than however a hash landed.
+/// One look at the repository. Ordered maps, so two looks compare in the same
+/// order every time.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Snapshot {
     pub runs: BTreeMap<u64, RunState>,
@@ -92,8 +91,8 @@ pub fn changes(before: &Snapshot, after: &Snapshot) -> Vec<Event> {
 
     for (id, now) in &after.runs {
         match before.runs.get(id) {
-            // A run nobody had seen. Announced by where it has got to, since a
-            // poll can easily miss the start of a short one.
+            // Announced by where it has got to: a poll can miss the start of
+            // a short run.
             None => events.push(run_event(*id, now, true)),
             Some(was) if !was.finished() && now.finished() => {
                 events.push(run_event(*id, now, false))
@@ -162,6 +161,20 @@ pub fn parse_duration(text: &str) -> Option<std::time::Duration> {
 /// Which commits of a snapshot are live. Used by a watcher told to wait for one.
 pub fn is_live(snapshot: &Snapshot, sha: &str) -> bool {
     snapshot.live.contains_key(sha)
+}
+
+/// One made-up event, shaped exactly like a real one, for `hooks test`. Waiting
+/// for a real deploy is a poor way to learn the field is called `label`.
+pub fn sample_event_json() -> String {
+    let event = Event {
+        kind: Kind::DeploySucceeded,
+        label: "API".to_string(),
+        id: "10234567890".to_string(),
+        title: "feat(billing): add invoice export endpoint".to_string(),
+        url: "https://github.com/acme/widgets/actions/runs/10234567890".to_string(),
+        author: "Ada Lovelace".to_string(),
+    };
+    serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string())
 }
 
 #[cfg(test)]
@@ -253,8 +266,7 @@ mod tests {
 
     #[test]
     fn a_short_run_seen_only_once_still_reports_how_it_ended() {
-        // Polling can miss the start entirely. Saying nothing would be worse than
-        // saying it finished.
+        // Polling can miss the start entirely; saying nothing is worse.
         let after = snapshot(&[(7, run("completed", Some("failure")))], &[]);
         let events = changes(&Snapshot::default(), &after);
 
@@ -284,9 +296,8 @@ mod tests {
 
     #[test]
     fn a_change_dropping_out_is_not_an_event() {
-        // A narrower -E or a rolled back deploy can shrink the list. That is not
-        // news of the kind a watcher exists to deliver, and announcing it as one
-        // would read as "your change was undone".
+        // A narrower -E or a rolled back deploy can shrink the list. Announcing
+        // that would read as "your change was undone".
         let before = snapshot(&[], &[("aaa", "PR #1"), ("bbb", "PR #2")]);
         let after = snapshot(&[], &[("aaa", "PR #1")]);
         assert!(changes(&before, &after).is_empty());

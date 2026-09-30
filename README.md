@@ -14,7 +14,7 @@ Built for the case where you cannot change anything: no access to the servers, n
 authority over the deploy workflows, no pipeline step you are allowed to add. It
 installs nothing into your repository.
 
-```
+```bash
 $ deplyd status pr 412
 Inspecting production deploys...
 
@@ -51,7 +51,9 @@ curl -fsSL https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install
 irm https://raw.githubusercontent.com/BertilVossebelt/Deplyd/main/install.ps1 | iex
 ```
 
-**From source**, needing Rust 1.98 or newer
+**From source** 
+
+Requires Rust 1.98 or newer.
 
 ```bash
 git clone https://github.com/BertilVossebelt/Deplyd.git
@@ -67,65 +69,65 @@ in with `gh auth login` and add completion with `deplyd completions <shell>`.
 
 Run it from inside any repo.
 
-Four verbs take a second word. The first word says what you want, the second says
+Most verbs take a second word. The first says what you want, the second says
 what about.
 
 ```
-deplyd status                     the last deployed commit, and your changes in it
-       status pr 412              is that pull request live?
-       status commit a1b2c3d      is that commit live? any ref, HEAD included
+deplyd status                     what each target is running, what is pending, and your changes in it
+       status pr <number>         is that pull request live?
+       status commit <ref>        is that commit live? any ref, HEAD included
 
        watch                      deploys and changes going live, as they happen
-       watch pr 412               the same, until that pull request is live
-       watch commit a1b2c3d       the same, for any ref
+       watch pr <number>          the same, until that pull request is live
+       watch commit <ref>         the same, for any ref
+       watch stop <id>            ask a background watcher to stop
+       watch log <id>             what one last said
+       watch startup              watches that come back when the machine does
+       watch startup disable <id> stop one coming back
 
        list environments          environments that -E accepts
        list authors               names that -A accepts
+       list watchers              what is watching in the background
+       list hooks                 scripts a watcher kicks
+
+       hooks add <script>         kick this when something happens
+       hooks remove <script>      stop kicking it
+       hooks test                 kick them all with a made-up event
 
        config                     what detection concluded about this repo
        config init                write that out as a file you can correct
+
+       remember author <name>     what -A means when you leave it off
+       remember environment <env> the same for -E
+       remember repo <path>       the same for --repo-path
+       remember depth <n>         the same for -D
+       remember every <duration>  how often a watch looks, when not told
+
+       completions                shell completion scripts
+       quota                      what is left of GitHub's hourly allowance
+       check                      prove it can only read
+       update                     whether a newer release is out
+       uninstall                  how to remove it from this machine
 ```
-
-The rest stand alone.
-
-| Command              |                                            |
-|----------------------|--------------------------------------------|
-| `deplyd remember`    | keep a default author, environment or repo |
-| `deplyd completions` | shell completion scripts                   |
-| `deplyd check`       | prove it can only read                     |
-| `deplyd update`      | whether a newer release is out             |
-| `deplyd uninstall`   | how to remove it from this machine         |
-
-`dp` is the same binary under a shorter name. Both words shorten while they stay
+`dp` is the same binary under a shorter name. Each word shortens while it stays
 unambiguous, so `dp li env` and `dp st pr 412` work.
 
 Every verb offers only the options it acts on, so `deplyd <verb> --help` is the
 short list that applies to it.
 
-| Option                    | Taken by                                         |
-|---------------------------|--------------------------------------------------|
-| `-E, --environment <env>` | `status`, `watch`, `config`; a prefix will do    |
-| `-A, --author <name>`     | the same, default `git config user.name`         |
-| `--anyone`                | the same, every author rather than yours         |
-| `-D, --depth <n>`         | `status`, `watch`; how far back, default 200     |
-| `-T, --take <n>`          | `status`, `watch`; how many to list, default 10  |
-| `-S, --skip <n>`          | `status`, `watch`; skip this many, for paging    |
-| `-J, --json`              | `status`, `watch`; machine-readable output       |
-| `--repo-path <path>`      | anything that opens a repo, default the cwd      |
-| `-F, --force`             | `config init`, to rewrite a file that exists     |
-| `-h, --help`              | anything; on `status` and `watch` it also        |
-|                           | explains the words the report uses               |
-| `-V, --version`           | which deplyd this is                             |
-
-Defaults can be kept:
-
-```bash
-deplyd remember author "Ada"
-deplyd remember environment staging
-deplyd remember repo /path/to/repo
-deplyd remember depth 500
-deplyd remember every 5m
-```
+| Option                    | Taken by                                                                     |
+|---------------------------|------------------------------------------------------------------------------|
+| `-E, --environment <env>` | `status`, `watch`, `config`; a prefix will do                                |
+| `-A, --author <name>`     | the same, default `git config user.name`                                     |
+| `--anyone`                | the same, every author rather than yours                                     |
+| `-D, --depth <n>`         | `status`, `watch`; how far back, default 200                                 |
+| `-T, --take <n>`          | `status`, `watch`; how many to list, default 10                              |
+| `-S, --skip <n>`          | `status`, `watch`; skip this many, for paging                                |
+| `-J, --json`              | `status`, `watch`; machine-readable output                                   |
+| `--repo-path <path>`      | anything that opens a repo, default the cwd                                  |
+| `-F, --force`             | `config init`, to rewrite a file that exists                                 |
+| `-h, --help`              | anything; on `status` and `watch` it also explains the terms the report uses |
+| `-V, --version`           | which deplyd this is                                                         |
 
 When `--depth` stops a target early the count reads `355+`, so a ceiling is never shown
 as a total.
@@ -143,14 +145,87 @@ deplyd watch commit HEAD              # the same, for any ref
 deplyd watch --every 5m --json        # one JSON object per line, per event
 ```
 
-| Option               |                                           |
-|----------------------|-------------------------------------------|
-| `--every <duration>` | how often to look, default 60s, floor 10s |
-| `--for <duration>`   | stop after this long                      |
+| Option                |                                              |
+|-----------------------|----------------------------------------------|
+| `--every <duration>`  | how often to look, default 60s, floor 10s    |
+| `--for <duration>`    | stop after this long                         |
+| `-B, --background`    | let go of the terminal and keep watching     |
+| `--at-startup`        | and again when the machine starts            |
+
+### In the background
+
+`deplyd watch --background` gives you the terminal back and writes what it sees
+to a log instead.
+
+```bash
+deplyd watch --background -E production
+deplyd list watchers            # what is running
+deplyd watch log a1b2c3         # what one last said
+deplyd watch stop a1b2c3        # ask it to stop
+```
+
+Stopping takes up to one interval: a watcher notices on its next look. Finished
+ones stay in the list, so `deplyd watch log` still works afterwards.
+
+### At startup
+
+`--at-startup` also writes the watch into wherever this machine looks at login.
+It implies `--background`.
+
+```bash
+deplyd watch --at-startup -E production
+deplyd watch startup            # what comes back at boot
+deplyd watch startup disable a1b2c3   # stop it coming back
+```
+
+| Platform |                                                                                     |
+|----------|-------------------------------------------------------------------------------------|
+| Windows  | a `.cmd` in the Startup folder                                                      |
+| macOS    | a LaunchAgent plist in `~/Library/LaunchAgents`                                     |
+| Linux    | a systemd user unit in `~/.config/systemd/user`                                     |
+
+`disable` stops it running but leaves the file in place, and names the path if
+you want to remove it yourself.
 
 Every look costs API requests, more of them the more deploy workflows a repo has, out
 of an hourly allowance shared with `gh`. So be careful not to run it too fast for
 too long. Especially if you have a lot of deploy workflows.
+
+`deplyd quota` shows what is left and when it refills. GitHub reports that
+differently depending on what you ask, so the figure is the lowest of what it
+said - a floor, not a count. When it runs out, deplyd says so and stops.
+
+## Hooks
+
+A watcher can kick your own scripts when something happens. Register them once;
+every event is handed to each one as a single JSON object on stdin.
+
+```bash
+deplyd hooks add ./notify.sh   # register
+deplyd list hooks              # list them
+deplyd hooks test              # kick them all with a made-up event
+deplyd hooks remove ./notify.sh
+```
+
+| Field    |                                                                        |
+|----------|------------------------------------------------------------------------|
+| `kind`   | `deploy.started`, `deploy.succeeded`, `deploy.failed` or `change.live` |
+| `label`  | which target it concerns                                               |
+| `id`     | a run id, a pull request number, or a short sha                        |
+| `title`  | the run's or the change's title                                        |
+| `url`    | where to go and look                                                   |
+| `author` | who wrote the change, absent for a deploy                              |
+
+There are working examples in [example-hooks/](example-hooks/): a desktop
+notification for Windows, macOS and Linux, each landing in the notification
+centre rather than a dialog box.
+
+```bash
+deplyd hooks add ./example-hooks/notify.sh
+```
+
+A hook gets 30 seconds, then it is stopped. One that fails is reported and the
+watch carries on.
 
 ## In a script
 
@@ -190,14 +265,14 @@ Per target:
 
 Per change:
 
-|                                |                                                                            |
-|--------------------------------|----------------------------------------------------------------------------|
-| `DEPLYD in <sha>`              | it is in the deployed commit                                               |
+|                                |                                                                             |
+|--------------------------------|-----------------------------------------------------------------------------|
+| `DEPLYD in <sha>`              | it is in the deployed commit                                                |
 | `DEPLYD in <sha> as a copy`    | the commit is absent but the same change is there, cherry-picked or rebased |
-| `REVERTED undone before <sha>` | it shipped, then was undone before the deployed commit                     |
-| `NOT DEPLYD deployed <sha>`    | neither the commit nor an equivalent change is there                       |
-| `NOT MERGED`                   | still open, or closed without merging                                      |
-| `NOT COVERED`                  | it changed no path any target covers                                       |
+| `REVERTED undone before <sha>` | it shipped, then was undone before the deployed commit                      |
+| `NOT DEPLYD deployed <sha>`    | neither the commit nor an equivalent change is there                        |
+| `NOT MERGED`                   | still open, or closed without merging                                       |
+| `NOT COVERED`                  | it changed no path any target covers                                        |
 
 `DEPLYD` means the code was built and the deploy ran to completion. Nothing outside the
 server can prove the process actually cycled, which is why it is not `VERIFIED`.
@@ -232,7 +307,7 @@ fixes.
 | `environments`                  | the wrong environment list. Your names replace the detected ones            |
 | `environments.<name>.workflows` | the wrong workflows for an environment. An explicit list always wins        |
 | `ignoreJobs`                    | a job showing up as a target that should not                                |
-| `targetJobs`                    | a job that should be a target and is not. One line beats six `ignoreJobs`   |
+| `targetJobs`                    | a job that should be a target and is not                                    |
 | `scopes`                        | which paths a target covers. Keyed by the label reported                    |
 
 ### What detection looks for
@@ -241,8 +316,8 @@ fixes.
 |---------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | a deploy workflow   | the filename or `name:` contains `deploy`, `release`, `publish`, `ship` or `cd`; or a job declares an `environment:`; or a step uses a known deploy action or runs an applying command |
 | an environment      | the name appears in the filename, in a job's `environment:`, or in a `workflow_dispatch` choice input                                                                                  |
-| a target            | a job that ships: it declares an `environment:`, or a step of it runs a known deploy or publish action or command. Being inside a deploy workflow is not enough - a release workflow mostly decides, gates and builds |
-| that, more loosely  | if no job in the workflow ships by any route deplyd knows, the older rule applies instead: any job that is not plumbing, with at least three steps. Better a guess than no targets at all |
+| a target            | a job that ships: it declares an `environment:`, runs a known deploy or publish step, or hands off to another workflow                                                                 |
+| that, more loosely  | if no job in the workflow looks like it ships: any job that is not plumbing, with at least three steps                                                                                 |
 | that target's scope | the job's `defaults.run.working-directory`; or a directory all its steps agree on; or the workflow's own `paths:` trigger filter                                                       |
 
 A job's name becomes its label, so `deploy-api` reports as `API`. Environments are
@@ -250,16 +325,12 @@ optional: a repo with one `deploy.yml` and none at all works.
 
 ## Read-only
 
-Deplyd never writes to GitHub and never changes your code. It makes two writes: `git
-fetch`, which updates your own remote-tracking refs and sends nothing, and its own
-settings file, in your config directory or at `.deplyd.json` in the repo if you put one
-there.
-
-The dangerous operations do not exist rather than being refused: every git call names
+Deplyd never writes to GitHub and never changes your code. The dangerous operations do not exist rather than being refused: every git call names
 a verb from a fixed set with no `push` and no `checkout`, and every GitHub request is
 one of a few GET routes with no method to set. Because a compiled binary cannot audit
 the source it came from, every run exercises its own refusal paths first, and a build
-whose guard has been weakened refuses to read a repository at all.
+whose guard has been weakened refuses to read a repository at all. This stops accidents, not someone determined to get around them.
+
 
 ```
 $ deplyd check
@@ -268,10 +339,17 @@ $ deplyd check
   write refusals      PASS  8 of 8 refused
   reads still work    PASS  5 of 5 allowed
   github routes       PASS  7 routes, all GET, all inside the repo
+  hooks               none registered, so nothing else is ever started
 ```
 
-This stops accidents, not someone determined to get around them.
+Deplyd does need access to some write operations for its functionality. 
+These are kept to a minimum and never change your remote repository. The exceptions are:
 
+- `git fetch`, which updates your own remote-tracking refs. This is necessary for accurate reporting.
+- its own files in your config directory - settings, watcher records and their
+  logs, old ones tidied away - or `.deplyd.json` in the repo if you put one there
+- one file in this machine's startup folder, and only if you ask for it with
+  `--at-startup`. The only thing it writes outside its own directory
 ## Limitations
 
 - Deploys outside GitHub Actions are invisible. There is no run to read.

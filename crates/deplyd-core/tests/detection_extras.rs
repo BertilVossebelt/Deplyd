@@ -299,9 +299,8 @@ jobs:
 #[test]
 fn dates_are_shown_in_one_timezone_whatever_the_commit_recorded() {
     // A merge made on github.com records UTC; a commit made at a desk records
-    // that desk's offset. Rendering each in the zone it happens to carry put the
-    // date column out of order with none of the times being wrong, which reads
-    // as a sorting bug and is not one.
+    // that desk's offset. Rendering each as it came put the column out of order
+    // with none of the times being wrong.
     let sandbox = support::Sandbox::new("mixed-zones");
 
     // The same instant, written two ways.

@@ -1,11 +1,11 @@
-//! What `deplyd check` runs, and what every invocation runs first. A binary has no
-//! source to scan, so this exercises the paths compiled into it.
+//! What `deplyd check` runs, and what every invocation runs first: a binary has
+//! no source to scan, so this exercises the paths compiled into it.
 
 use crate::git::{ReadOnlyGit, Verb};
 use crate::http;
 
-/// The verbs this build may run, frozen. The last of four gates against a new one
-/// being added quietly; the other three are in `git.rs`.
+/// The verbs this build may run, frozen. The last of four gates against a new
+/// one arriving quietly; the other three are in `git.rs`.
 pub const EXPECTED_VERBS: &[&str] = &[
     "rev-parse",
     "rev-list",

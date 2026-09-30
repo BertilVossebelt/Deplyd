@@ -18,10 +18,8 @@ fn readme() -> String {
     std::fs::read_to_string(path).expect("README should be readable")
 }
 
-/// The verbs the binary offers, in the order `--help` prints them.
-///
-/// Asked of the binary rather than of its source, so this is what someone
-/// following the README would actually be able to run.
+/// The verbs the binary offers, in the order `--help` prints them. Asked of the
+/// binary, so this is what a README reader could actually run.
 fn verbs_the_binary_offers() -> Vec<String> {
     let sandbox = Sandbox::empty();
     let help = sandbox.deplyd_stdout(&["--help"]);
@@ -39,13 +37,9 @@ fn verbs_the_binary_offers() -> Vec<String> {
     listed
 }
 
-/// Every command the README puts forward, from both places it lists them: the
-/// block laying out the verbs that take a second word, and the table of the
-/// ones that do not.
-///
-/// Prose is deliberately not read. A sentence mentioning a verb is not a
-/// promise the way a listing is, and reading it would turn every "deplyd reads
-/// history" into a command that has to exist.
+/// Every command the README puts forward, from both places it lists them. Prose
+/// is deliberately not read: a sentence mentioning a verb is not a promise the
+/// way a listing is.
 fn commands_the_readme_lists(text: &str) -> Vec<(String, Option<String>)> {
     let mut found = Vec::new();
 
@@ -99,7 +93,10 @@ fn every_command_the_readme_lists_exists() {
              it offers: {listed:?}"
         );
 
-        // A second word is a subcommand, and only the binary knows whether it is one.
+        // A second word is a subcommand, and only the binary knows whether it
+        // is one. A verb with no subcommands takes values instead, and then
+        // the word has to be one its help names: `remember author` is fine
+        // because `remember --help` says author.
         let Some(second) = second else { continue };
         let help = sandbox.deplyd_stdout(&[verb, "--help"]);
         let children: Vec<&str> = help
@@ -109,6 +106,17 @@ fn every_command_the_readme_lists_exists() {
             .take_while(|line| line.starts_with("  "))
             .filter_map(|line| line.split_whitespace().next())
             .collect();
+        if children.is_empty() {
+            let named = help
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|word| word == second);
+            assert!(
+                named,
+                "the README lists `deplyd {verb} {second}`, and {verb}'s help never mentions {second}:
+{help}"
+            );
+            continue;
+        }
         assert!(
             children.contains(&second.as_str()),
             "the README lists `deplyd {verb} {second}`, which {verb} does not take.

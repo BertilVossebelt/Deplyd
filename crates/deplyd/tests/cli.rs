@@ -1,13 +1,11 @@
 //! The CLI, driven the way a person drives it.
 //!
-//! The cases are the PowerShell suite's own declarative table: each names a fixture,
-//! the arguments, and the text that must appear. Keeping the expectations rather than
-//! rewriting them is the point - they are what the tool has always promised, and a
-//! port that quietly changed them would be a rewrite wearing a port's clothes.
+//! The cases are the PowerShell suite's own table: a fixture, the arguments, and
+//! the text that must appear. Keeping the expectations is the point - they are
+//! what the tool has always promised.
 //!
-//! No case here reaches GitHub. Fixtures have no runs, and the sandbox git cannot
-//! speak any protocol but file, so nothing can reach a remote even if something is
-//! wrong.
+//! No case reaches GitHub: fixtures have no runs, and the sandbox git speaks only
+//! file.
 
 mod support;
 
@@ -366,12 +364,16 @@ fn a_bare_command_line_reads_like_any_other_verb_missing_its_second_word() {
     }
 
     // The verbs are named, but not the one the shell calls and people do not.
-    assert!(
-        bare.contains("status, watch, list"),
-        "got:
+    // Checked one at a time rather than as a run of text: asserting the order
+    // meant every new verb broke a test that had nothing to do with it.
+    for verb in ["status", "watch", "list", "config", "hooks"] {
+        assert!(
+            bare.contains(verb),
+            "`{verb}` should be offered, got:
 {}",
-        indent(&bare)
-    );
+            indent(&bare)
+        );
+    }
     assert!(
         !bare.contains("complete,") && !bare.ends_with("complete"),
         "the hidden completer should not be offered, got:

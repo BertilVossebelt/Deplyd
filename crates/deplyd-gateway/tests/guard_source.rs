@@ -1,13 +1,10 @@
 //! The descendant of `Test-SourceIsReadOnly`.
 //!
-//! The PowerShell version scanned its own files before loading them, which it could
-//! do because the source was the program. Here the equivalent runs at build time:
-//! the crate fails its tests if anything outside `src/gateway/` can start a process,
-//! or if the gateway's narrow opt-out from the lint is copied somewhere else.
+//! The crate fails its tests if anything outside the gateway can start a process
+//! or remove a file, or if its narrow opt-out from the lint is copied elsewhere.
 //!
-//! This is a backstop. The primary guarantee is that dangerous operations are
-//! unrepresentable - there is no `Verb::Push` to call. This catches the case where
-//! someone reaches past the gateway rather than widening it.
+//! A backstop: the primary guarantee is that dangerous operations are
+//! unrepresentable. This catches someone reaching past the gateway.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,6 +16,9 @@ const GATEWAY_ONLY: &[(&str, &str)] = &[
     ("Command::new", "spawning a process"),
     ("clippy::disallowed_types", "opting out of the spawn lint"),
     ("clippy::disallowed_methods", "opting out of the write lint"),
+    // Only tidy.rs, and only a finished watcher's record or log. The gateway
+    // is the boundary; the narrowness is in that module and its tests.
+    ("fs::remove_file", "removing a file"),
 ];
 
 /// Constructs that would reach a process or the filesystem without naming either,
@@ -32,8 +32,7 @@ const FORBIDDEN_EVERYWHERE: &[(&str, &str)] = &[
         "std::env::set_var",
         "changing the environment changes what a child process is",
     ),
-    ("fs::remove_dir_all", "deplyd never deletes"),
-    ("fs::remove_file", "deplyd never deletes"),
+    ("fs::remove_dir_all", "deplyd never removes a directory"),
 ];
 
 /// The workspace root, two levels above this crate. The guards audit every crate,
@@ -77,9 +76,8 @@ fn source_files(root: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// Comments describe the gateway at length, so scanning them would fail on the prose
-/// that explains the rule. Strips line comments and string literals, the same
-/// reasoning as the PowerShell audit's stripping step.
+/// Strips line comments and string literals: the prose explaining the rule would
+/// otherwise fail the scan for it.
 fn code_only(line: &str) -> String {
     let without_comment = match line.find("//") {
         Some(at) => &line[..at],
@@ -101,9 +99,8 @@ fn code_only(line: &str) -> String {
     out
 }
 
-/// The gateway is a whole crate now, so the exemption is the crate directory rather
-/// than a module name. Matched exactly: a crate called "deplyd-gateway-helpers"
-/// added later must not inherit the exemption by looking similar.
+/// The exemption is the crate directory, matched exactly: a later
+/// "deplyd-gateway-helpers" must not inherit it by looking similar.
 fn is_gateway(path: &Path) -> bool {
     path.components().any(|c| c.as_os_str() == "deplyd-gateway")
 }

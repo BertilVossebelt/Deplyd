@@ -84,9 +84,8 @@ fn strip_pr_suffix(subject: &str) -> String {
     trimmed.to_string()
 }
 
-/// The first commit after it that touched the same files. File level on purpose:
-/// `git log -L` resolves against the end of the range while the line numbers come
-/// from the start.
+/// The first commit after it that touched the same files. File level, because
+/// `git log -L` resolves against the end of the range, not the start.
 pub fn later_commits_touching(
     repo: &Repo,
     commit: &str,
@@ -114,8 +113,8 @@ pub fn later_commits_touching(
 pub struct Copy {
     pub sha: String,
     pub subject: String,
-    /// How the copy was identified, which is worth showing: a recorded cherry-pick is
-    /// exact, an equivalent patch is inference.
+    /// Worth showing: a recorded cherry-pick is exact, an equivalent patch is
+    /// inference.
     pub how: &'static str,
 }
 

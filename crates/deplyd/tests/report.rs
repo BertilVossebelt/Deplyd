@@ -463,3 +463,60 @@ fn a_commit_is_not_given_fields_a_commit_does_not_have() {
         );
     }
 }
+
+#[test]
+fn a_spent_allowance_is_said_rather_than_reported_as_nothing() {
+    // A refused request answers empty, so without this deplyd would report no
+    // targets and nothing live - neither of which is a fact about the repo.
+    let world = deployed(&[]);
+    world.sandbox.stub("rate-limited", "1800");
+
+    let (output, code) = world
+        .sandbox
+        .deplyd_stubbed(&["status", "-A", "Ada Lovelace"]);
+
+    assert!(
+        output.contains("allowance is spent"),
+        "it should name the reason, got:
+{output}"
+    );
+    assert!(
+        output.contains("30m"),
+        "and say how long until it refills, got:
+{output}"
+    );
+    assert!(
+        !output.contains("No deploy workflows") && !output.contains("no targets"),
+        "and must not pass the empty answer off as a finding, got:
+{output}"
+    );
+    assert_eq!(code, 1, "deplyd could not answer, which is not a verdict");
+}
+
+#[test]
+fn a_watcher_waits_out_a_spent_allowance_rather_than_dying_on_it() {
+    // A one-off command stops and says so; a watcher waits it out, since exiting
+    // would leave one started at boot dead until the machine restarts.
+    let world = deployed(&[]);
+    world.sandbox.stub("rate-limited", "600");
+
+    let (output, code) = world
+        .sandbox
+        .deplyd_stubbed(&["watch", "--for", "30s", "--every", "10s", "--anyone"]);
+
+    assert!(
+        !output.contains("allowance is spent"),
+        "that is the one-off wording; a watcher should not use it:
+{output}"
+    );
+    assert!(
+        output.contains("time is up"),
+        "it should end on its own deadline rather than on the refusal:
+{output}"
+    );
+    assert_eq!(
+        code, 0,
+        "a deadline is not a failure:
+{output}"
+    );
+}

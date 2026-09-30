@@ -2,16 +2,19 @@
 //!
 //! Four layers: dangerous operations are unrepresentable ([`git::Verb`] has no
 //! `Push`, the HTTP client takes no method), writing arguments are refused before
-//! anything runs, `clippy.toml` keeps `Command` inside this crate, and `reqwest` is
-//! listed here and nowhere else.
+//! anything runs, `clippy.toml` keeps `Command` in this crate, and `reqwest` is
+//! listed here alone. [`selfcheck`] then runs those refusals in the built binary.
 //!
-//! [`selfcheck`] runs the refusal paths compiled into the binary, since a binary
-//! cannot audit the source it came from.
+//! [`tidy`] is the one place a file is removed, and it takes only a finished
+//! watcher's record or log from deplyd's own directory.
 
+pub mod background;
 pub mod credential;
 pub mod git;
+pub mod hook;
 pub mod http;
 pub mod selfcheck;
+pub mod tidy;
 
 use std::fmt;
 
