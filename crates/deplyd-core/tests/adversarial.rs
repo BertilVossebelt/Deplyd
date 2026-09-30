@@ -1,8 +1,7 @@
 //! Input the parser was not written for.
 //!
-//! Every case here is a shape someone could put in a workflow. The rule is the same
-//! throughout: read it correctly, or refuse it by name. Returning something plausible
-//! and wrong is the one outcome that is not allowed.
+//! Every case is a shape someone could put in a workflow. Read it correctly or
+//! refuse it by name: something plausible and wrong is the one outcome barred.
 
 use deplyd_core::yaml::{Node, parse};
 
@@ -55,8 +54,7 @@ fn a_windows_path_keeps_its_backslashes() {
 
 #[test]
 fn nested_flow_sequences_are_read_as_sequences() {
-    // Kept as strings they would read as the literal "[a, b]", which is the sort of
-    // confident wrong answer this parser exists to avoid.
+    // Kept as strings they would read as the literal "[a, b]".
     let doc = parse("matrix: [[a, b], [c]]\n").expect("parses");
     let outer = doc.get("matrix").expect("matrix");
     assert_eq!(outer.items().len(), 2);
@@ -125,16 +123,14 @@ fn unicode_survives_intact() {
 
 #[test]
 fn a_document_that_is_only_a_scalar_is_refused() {
-    // A workflow is a mapping. Anything else is not one, and saying so beats
-    // returning an empty document that reads as "this repo deploys nothing".
+    // A workflow is a mapping. An empty document reads as "deploys nothing".
     let error = parse("just a string\n").expect_err("refused");
     assert!(error.reason.contains("key"), "got: {error}");
 }
 
 #[test]
 fn runaway_nesting_is_refused_rather_than_crashing() {
-    // A malformed file once turned into a stack overflow here. Refusing is a worse
-    // answer than reading it, and a much better one than crashing.
+    // A malformed file once turned into a stack overflow here.
     let mut text = String::from("a:\n");
     for depth in 1..200 {
         text.push_str(&" ".repeat(depth * 2));

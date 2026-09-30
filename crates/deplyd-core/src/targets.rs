@@ -59,11 +59,9 @@ pub struct Target {
     pub run_id: u64,
     pub run_url: String,
     pub run_created_at: String,
-    /// When this target finished deploying, as GitHub reports it: the job's own
-    /// completion, or its start if the run is still going, or the run's creation
-    /// if the job says neither. Deplyd is asked when something went live, so
-    /// this is the time worth showing - the deployed commit's own date says only
-    /// how old the code is.
+    /// When it finished deploying: the job's completion, its start if the run is
+    /// still going, or the run's creation. deplyd is asked when something went
+    /// live, which the commit's own date does not answer.
     pub deployed_at: String,
     pub run_workflow_file: String,
     pub sha: String,
@@ -152,8 +150,7 @@ pub fn target_label(job_name: &str) -> String {
         .collect();
 
     if parts.is_empty() {
-        // A job with no name at all would otherwise get an empty label, and an empty
-        // label matches every workflow when concerns are worked out.
+        // An empty label matches every workflow when concerns are worked out.
         if last.trim().is_empty() {
             return "DEPLOY".to_string();
         }
@@ -170,20 +167,17 @@ fn clean_label_part(text: &str) -> String {
         .join("-")
 }
 
-/// Ignore words that matched a job name, compared against whole words: matching
-/// anywhere made "deploy-latest" contain "test". A word still matches the start of a
-/// longer one, so "prod" catches "production".
-/// Whether a job is one that ships: it declares an environment, a step of it
-/// does something that reaches users, or it hands the work to another workflow.
-///
-/// The last of those is not evidence so much as the absence of it. A job that
-/// only says `uses:` has no steps to read, and what it calls may well be the
-/// deploy - so it gets the benefit of the doubt, which costs a target nobody
-/// wanted far less often than dropping the one that mattered.
+/// Whether a job ships: it declares an environment, a step reaches users, or it
+/// hands the work to another workflow. The last is the absence of evidence - a
+/// job that only says `uses:` has no steps to read - and a target nobody wanted
+/// costs less than dropping the one that mattered.
 fn job_ships(facts: &crate::detect::JobFacts) -> bool {
     facts.deploys || facts.environment.is_some() || facts.calls_workflow.is_some()
 }
 
+/// Ignore words that matched a job name, by whole word: matching anywhere made
+/// "deploy-latest" contain "test". The start of a longer word still counts, so
+/// "prod" catches "production".
 pub fn matched_ignore_words(name: &str, ignore_jobs: &[String]) -> Vec<String> {
     let words = crate::detect::segments(name);
     ignore_jobs
@@ -196,10 +190,8 @@ pub fn matched_ignore_words(name: &str, ignore_jobs: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// The commit a job checked out, read from its own log.
-///
-/// `actions/checkout` prints it alone on a line after GitHub's timestamp. That shape
-/// is the only trustworthy source; anything looser is reported as a guess.
+/// The commit a job checked out, read from its own log. `actions/checkout`
+/// prints it alone on a line after the timestamp; anything looser is a guess.
 pub struct ResolvedSha {
     pub sha: String,
     pub exact: bool,
@@ -248,9 +240,8 @@ pub fn resolve_checkout_sha(log: &str, repo: &dyn CommitLookup) -> Option<Resolv
         });
     }
 
-    // Nothing bare, so fall back to any commit named anywhere in the log. Without
-    // fetching: pinned action SHAs and cache keys are forty hex characters too, and
-    // fetching on the first that misses would pay the whole cost to answer a guess.
+    // Fall back to any commit named in the log, without fetching: pinned action
+    // SHAs and cache keys are forty hex characters too.
     for line in log.lines() {
         if line.contains("Download action repository") {
             continue;
@@ -332,13 +323,11 @@ pub fn build(
     let mut examined = 0usize;
     let mut stopped_early = false;
 
-    // Jobs lists are independent, so they go together - but only for runs the walk
-    // will reach. Asking for all of them trades waiting in turn for fetching far more
-    // than is needed: forty successful runs, and it stops after five.
+    // Independent, so they go together - but only for runs the walk will reach:
+    // forty successful runs, and it stops after five.
     prefetch_wave(github, &successful, 0);
 
-    // Then the logs, which are the large requests. A run reveals a new target by its
-    // job names, so which logs are needed is known before any is asked for.
+    // Then the logs, the large requests. Job names say which are needed first.
     let wanted = plan_log_fetches(context, github, &successful, cache);
     if !wanted.is_empty() {
         note(&format!("  reading {} job log(s)...", wanted.len()));
@@ -388,10 +377,8 @@ pub fn build(
     }
 }
 
-/// Asks for one wave of jobs lists, starting at `from`.
-///
-/// A wave rather than everything: the walk stops as soon as a few runs in a row
-/// reveal nothing new, so fetching the whole history would be work thrown away.
+/// Asks for one wave of jobs lists, starting at `from`. A wave rather than all
+/// of them: the walk stops as soon as a few runs in a row reveal nothing new.
 fn prefetch_wave(github: &GitHub, successful: &[&Run], from: usize) -> usize {
     let end = (from + crate::github::MAX_IN_FLIGHT).min(successful.len());
     if from >= end {
@@ -507,15 +494,12 @@ fn target_from_job(
         return Err((job.name.clone(), format!("name contains '{word}'")));
     }
 
-    // Being in a deploy workflow is not the same as deploying. A release
-    // workflow decides, gates and builds before anything ships, and every one of
-    // those jobs would otherwise report as a target you could ask about - and
-    // then drag a verdict to NOT DEPLYD, because a change is only live when
-    // every target has it.
+    // Being in a deploy workflow is not the same as deploying: a release workflow
+    // decides, gates and builds first, and each of those jobs would report as a
+    // target - dragging every verdict to NOT DEPLYD.
     //
-    // Asked of the workflow first: if nothing in it shows evidence, detection
-    // has nothing to go on and falls back to the old rule rather than reporting
-    // a repo with no targets at all.
+    // Asked of the workflow first, so a file showing no evidence at all falls
+    // back to the old rule rather than reporting no targets.
     let workflow_ships_somewhere = facts.is_some_and(|f| f.jobs.iter().any(job_ships));
     let named_by_hand = !matched_ignore_words(&job.name, &context.target_jobs).is_empty();
     if workflow_ships_somewhere && !named_by_hand && !job_facts.is_some_and(job_ships) {
@@ -565,11 +549,9 @@ fn target_from_job(
         scope = facts.trigger_paths.clone();
     }
 
-    // A directory the run makes for itself is not a scope. `working-directory:
-    // artifacts` names somewhere the job downloads into, and taking it at face
-    // value leaves the target covering nothing, so every change reads as
-    // NOT COVERED. Covering everything is the honest answer when the repository
-    // has no such path.
+    // A directory the run makes for itself is not a scope: `working-directory:
+    // artifacts` is somewhere it downloads into, and taking that at face value
+    // makes every change read as NOT COVERED.
     scope.retain(|path| repo.holds_path(path));
 
     if let Some(from_override) = context.scope_override(&label) {

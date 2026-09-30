@@ -41,8 +41,7 @@ impl FileTransport {
 impl Transport for FileTransport {
     fn get(&self, route: &Route, _owner: &str, _repo: &str) -> Result<String, HttpError> {
         // A fixture can say the allowance is spent by leaving this file there.
-        // The refusal is the thing worth testing: every answer after it is empty,
-        // and empty reads exactly like "nothing is deployed".
+        // Every answer after a refusal is empty, which reads as "not deployed".
         let refusal = self.directory.join("rate-limited");
         if refusal.is_file() {
             let wait = std::fs::read_to_string(&refusal)

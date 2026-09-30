@@ -1,9 +1,8 @@
 //! Where the GitHub token comes from.
 //!
-//! `gh auth login` is a device flow against access you already have, so no personal
-//! access token has to be created and no organisation has to approve one. This is the
-//! only place deplyd runs anything but git, and it runs one command with two fixed
-//! arguments.
+//! `gh auth login` is a device flow against access you already have: no personal
+//! access token to create, no organisation to approve one. The only place deplyd
+//! runs anything but git, and it runs one command with two fixed arguments.
 
 use std::fmt;
 
@@ -53,8 +52,8 @@ pub struct Credential {
     pub source: Source,
 }
 
-/// `GITHUB_TOKEN` first so that CI, where gh may not be installed, needs no setup;
-/// then gh, which is where a person's credential lives.
+/// `GITHUB_TOKEN` first, so CI needs no setup; then gh, where a person's
+/// credential lives.
 pub fn find() -> Result<Credential, CredentialError> {
     if let Ok(token) = std::env::var("GITHUB_TOKEN")
         && !token.trim().is_empty()
@@ -72,14 +71,9 @@ pub fn find() -> Result<Credential, CredentialError> {
     })
 }
 
-/// Runs `gh auth token` and nothing else. The arguments are a literal, not a
-/// parameter, so there is nothing to constrain.
-/// Where gh is, which is not always on PATH.
-///
-/// A terminal keeps the PATH it was started with, so a gh installed since it opened
-/// is invisible until it is reopened - and IDE terminals can lag further behind. That
-/// made deplyd say gh was missing when it was sitting right there, so after PATH the
-/// usual install locations are tried.
+/// Where gh is, which is not always on PATH: a terminal keeps the PATH it was
+/// started with, so a gh installed since it opened is invisible until it is
+/// reopened. The usual install locations are tried after PATH.
 fn github_cli_path() -> std::path::PathBuf {
     let candidates: Vec<std::path::PathBuf> = if cfg!(windows) {
         ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]
@@ -152,10 +146,8 @@ pub fn github_cli_present() -> bool {
     ran(std::path::PathBuf::from("gh")) || ran(github_cli_path())
 }
 
-/// The owner and repository a remote URL names, in any of the spellings GitHub
-/// hands out: https, scp-style and ssh://.
 /// Where a remote's repository lives on the web, for building links into it.
-/// Keeps the host, so an enterprise instance links to itself rather than github.com.
+/// Keeps the host, so an enterprise instance links to itself.
 pub fn web_base(url: &str) -> Option<String> {
     let (owner, repo) = parse_remote(url)?;
     let trimmed = url.trim().trim_end_matches('/');
@@ -174,6 +166,8 @@ pub fn web_base(url: &str) -> Option<String> {
     (!host.is_empty()).then(|| format!("https://{host}/{owner}/{repo}"))
 }
 
+/// The owner and repository a remote URL names, in any spelling GitHub hands
+/// out: https, scp-style and ssh://.
 pub fn parse_remote(url: &str) -> Option<(String, String)> {
     let trimmed = url.trim().trim_end_matches('/');
     let without_git = trimmed.strip_suffix(".git").unwrap_or(trimmed);

@@ -1,16 +1,14 @@
 //! The git half of the gateway.
 //!
-//! The dangerous verbs do not exist, so there is nothing to refuse. What still needs
-//! refusing are arguments: `config` writes when given two operands, `fetch` deletes
-//! when given `--prune`.
+//! The dangerous verbs do not exist, so only arguments need refusing: `config`
+//! writes when given two operands, `fetch` deletes when given `--prune`.
 
 use std::ffi::OsStr;
 use std::path::Path;
 
 use super::Denied;
 
-/// Every git subcommand deplyd may run. Widening it takes a diff, not a string that
-/// happened to pass a check.
+/// Every git subcommand deplyd may run. Widening it takes a diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verb {
     RevParse,
@@ -31,9 +29,8 @@ pub enum Verb {
 }
 
 impl Verb {
-    /// Every variant, for the self-check. Kept honest by `position` below, by
-    /// `VERB_COUNT`, and by the self-check's own frozen list - four places that
-    /// disagree until a change is deliberate.
+    /// Every variant, for the self-check. Kept honest by `position`, `VERB_COUNT`
+    /// and the self-check's frozen list - four places that must agree.
     pub const ALL: &'static [Verb] = &[
         Verb::RevParse,
         Verb::RevList,
@@ -51,7 +48,7 @@ impl Verb {
     ];
 
     /// Where a verb sits in [`Verb::ALL`]. Exists for its exhaustiveness: a new
-    /// variant is a compile error here, which a hand-written array cannot manage.
+    /// variant is a compile error here.
     const fn position(self) -> usize {
         match self {
             Verb::RevParse => 0,
@@ -108,9 +105,8 @@ const _: () = {
     }
 };
 
-/// Options that change what git *is* rather than what it does. `-c alias.x=!sh`
-/// reaches a shell; `--exec-path` moves where git finds its helpers. The verb says
-/// nothing about them, so they are refused by name.
+/// Options that change what git *is* rather than what it does: `-c alias.x=!sh`
+/// reaches a shell, `--exec-path` moves its helpers. Refused by name.
 const FORBIDDEN_ANYWHERE: &[&str] = &[
     "-c",
     "--config-env",
@@ -158,8 +154,7 @@ fn write_would_occur(verb: Verb, args: &[&str]) -> Option<String> {
         }
         Verb::Fetch => {
             // Allowed by exact spelling: a refspec overwrites local branches and
-            // --prune deletes them, and naming the three deplyd uses is easier than
-            // enumerating every harmful form.
+            // --prune deletes them.
             const FETCH_ALLOWED: &[&str] = &["origin", "--quiet", "-q", "--no-tags"];
             for arg in args {
                 if !FETCH_ALLOWED.contains(arg) {
@@ -196,8 +191,8 @@ pub struct ReadOnlyGit {
 impl ReadOnlyGit {
     /// Refuses rather than panics, naming the argument and why.
     pub fn new(verb: Verb, args: &[&str]) -> Result<Self, Denied> {
-        // A verb missing from Verb::ALL is invisible to the self-check, so it cannot
-        // run at all. Nothing legitimate reaches this; omission fails closed.
+        // A verb missing from Verb::ALL is invisible to the self-check, so
+        // omission fails closed rather than running unchecked.
         if !Verb::ALL.contains(&verb) {
             return Err(Denied::new(
                 format!("git {}", verb.as_str()),
@@ -247,10 +242,8 @@ impl ReadOnlyGit {
         argv
     }
 
-    /// The single place in deplyd that starts a git process.
-    ///
-    /// The environment is pinned: the pager and external-diff hooks both name a
-    /// program to run and can be set by a repository's own config.
+    /// The single place in deplyd that starts a git process. The environment is
+    /// pinned: the pager and external-diff hooks both name a program to run.
     #[allow(clippy::disallowed_types)] // the gateway is where spawning is allowed
     pub fn run(&self, cwd: &Path) -> std::io::Result<std::process::Output> {
         std::process::Command::new("git")

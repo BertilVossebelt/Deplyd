@@ -73,7 +73,7 @@ Most verbs take a second word. The first says what you want, the second says
 what about.
 
 ```
-deplyd status                     the last deployed commit, and your changes in it
+deplyd status                     what each target is running, what is pending, and your changes in it
        status pr <number>         is that pull request live?
        status commit <ref>        is that commit live? any ref, HEAD included
 

@@ -229,9 +229,8 @@ impl Parser {
             let number = line.number;
             check_supported(&content, number)?;
 
-            // An item that is itself a sequence: "- - x". The inner dash is peeled
-            // off here, not just re-entered - leaving it made this branch match
-            // again, forever.
+            // An item that is itself a sequence: "- - x". Peeled off here, not
+            // re-entered: leaving it made this branch match forever.
             if content.starts_with("- ") || content == "-" {
                 let rest = content.strip_prefix("- ").unwrap_or("");
                 let extra = rest.len() - rest.trim_start().len();
@@ -250,9 +249,8 @@ impl Parser {
                 continue;
             }
 
-            // Otherwise rewrite the dash away and let the ordinary rules apply, so
-            // that "- name: Build" is a mapping whose later keys line up under
-            // "name" rather than under the dash.
+            // Otherwise rewrite the dash away, so "- name: Build" is a mapping
+            // whose later keys line up under "name".
             self.lines[self.at].dash = false;
             self.lines[self.at].indent = content_indent;
             items.push(self.node(content_indent, depth + 1)?);
@@ -309,9 +307,8 @@ impl Parser {
         Ok(Node::Map(entries))
     }
 
-    /// A `|` or `>` block: every following line indented past the key belongs to it.
-    /// deplyd never reads the contents of a `run:`, but it has to consume them, or
-    /// a shell script's own colons would be parsed as mapping keys.
+    /// A `|` or `>` block: every line indented past the key belongs to it. deplyd
+    /// never reads a `run:`, but must consume it or its colons parse as keys.
     fn block_scalar(&mut self, indent: usize, fold: bool) -> Result<Node, YamlError> {
         let mut collected: Vec<String> = Vec::new();
         while let Some(line) = self.current() {
@@ -393,8 +390,8 @@ fn split_key(content: &str) -> Option<(String, String)> {
 
 fn block_scalar_style(rest: &str) -> Option<bool> {
     let head = rest.trim();
-    // Chomping and indentation indicators ride along: |- >- |+ >2 are all the same
-    // to deplyd, which only needs the block consumed rather than interpreted.
+    // Chomping and indentation indicators ride along: |- >- |+ >2 all just need
+    // consuming, not interpreting.
     if head.starts_with('|') && head[1..].chars().all(|c| "+-0123456789".contains(c)) {
         return Some(false);
     }

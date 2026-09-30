@@ -466,9 +466,8 @@ fn a_commit_is_not_given_fields_a_commit_does_not_have() {
 
 #[test]
 fn a_spent_allowance_is_said_rather_than_reported_as_nothing() {
-    // The dangerous shape: a refused request answers empty, so without this
-    // deplyd would say there are no targets and no changes are live. Both read
-    // as facts about the repository, and neither is one.
+    // A refused request answers empty, so without this deplyd would report no
+    // targets and nothing live - neither of which is a fact about the repo.
     let world = deployed(&[]);
     world.sandbox.stub("rate-limited", "1800");
 
@@ -496,9 +495,8 @@ fn a_spent_allowance_is_said_rather_than_reported_as_nothing() {
 
 #[test]
 fn a_watcher_waits_out_a_spent_allowance_rather_than_dying_on_it() {
-    // A one-off command stops and says so. A watcher does not: being refused is
-    // something to wait through, and exiting would leave a watcher started at
-    // boot dead until the machine restarts. --for is what bounds the wait.
+    // A one-off command stops and says so; a watcher waits it out, since exiting
+    // would leave one started at boot dead until the machine restarts.
     let world = deployed(&[]);
     world.sandbox.stub("rate-limited", "600");
 

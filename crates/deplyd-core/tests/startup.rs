@@ -1,9 +1,8 @@
 //! What gets written into each platform's startup folder.
 //!
-//! Two of these three files can never be exercised on the machine running the
-//! tests, so the shape is asserted rather than trusted. A plist that will not
-//! parse or a unit with no [Install] section fails silently at a login nobody
-//! is watching, which is the worst way to find out.
+//! Two of the three can never be exercised on the machine running the tests, so
+//! the shape is asserted: a bad plist or a unit with no [Install] section fails
+//! silently at a login nobody is watching.
 
 use deplyd_core::startup::{Platform, os_file};
 
@@ -72,9 +71,8 @@ fn the_linux_file_is_a_unit_systemd_will_enable() {
         body.contains("WantedBy=default.target"),
         "it would never start: {body}"
     );
-    // ExecStart starts the watcher and returns. Without these, systemd reads
-    // that as the unit finishing and tears down the cgroup, taking the watcher
-    // with it - so nothing survives a boot.
+    // ExecStart returns as soon as the watcher is started. Without these,
+    // systemd reads that as the unit finishing and tears down the cgroup.
     for directive in ["RemainAfterExit=yes", "KillMode=process"] {
         assert!(
             body.contains(directive),

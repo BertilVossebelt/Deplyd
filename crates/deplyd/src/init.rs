@@ -16,8 +16,7 @@ use crate::render;
 use crate::term::{ACCENT, DIM, WARN};
 
 /// What detection concluded, in the shape `.deplyd.json` takes. Built from the
-/// current conclusion, which already includes whatever the existing file sets -
-/// regenerating from bare detection would throw those corrections away.
+/// current conclusion, so corrections in an existing file are not thrown away.
 pub fn draft(context: &Context) -> Override {
     let mut environments = BTreeMap::new();
     for name in &context.environments {
@@ -29,9 +28,9 @@ pub fn draft(context: &Context) -> Override {
         environments.insert(name.clone(), EnvironmentOverride { workflows });
     }
 
-    // Every target deplyd expects, with the scope it inferred; an empty list means it
-    // covers everything. Read from the workflow files rather than from runs, since
-    // the repos that need this file are the ones where finding targets went wrong.
+    // Every target deplyd expects, with the scope it inferred; empty covers
+    // everything. From the workflow files, since the repos that need this file
+    // are the ones where finding targets went wrong.
     let mut scopes: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for fact in context.deploy_facts() {
         for job in &fact.jobs {
@@ -129,8 +128,8 @@ pub fn run(context: &Context, repo: &Repo, force: bool) {
     println!();
 
     if !context.override_location.shared {
-        // The name is the whole mechanism, and "move it as .deplyd.json" reads as a
-        // move with a note attached. Print the command so the rename cannot be missed.
+        // The name is the whole mechanism, so print the command: "move it as
+        // .deplyd.json" reads as a move with a note attached.
         let shared = context.repo_root.join(".deplyd.json");
         let copy = if cfg!(windows) { "copy" } else { "cp" };
 

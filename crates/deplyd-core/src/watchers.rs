@@ -1,27 +1,19 @@
 //! Watchers running in the background, and the file each one leaves behind.
 //!
-//! Two of deplyd's own rules shape this more than anything else.
+//! Stopping is a request written into the file, not a signal: the watcher reads
+//! it on its next look and exits, which costs up to one interval and reaches
+//! into no other process. Liveness is a heartbeat, since a pid says nothing once
+//! the number has been handed on.
 //!
-//! Stopping a watcher does not remove its record: it is marked stopped and
-//! stays, so `watch log` still answers afterwards. What does go, and the only
-//! thing deplyd removes anywhere, is a finished record once it is a month old
-//! and not among the newest ten - see [`tidy`]. Without that a machine that
-//! watches for a year has hundreds of records nobody will look at again.
-//!
-//! It does not kill processes either. Stopping is a request written into the
-//! file, which the watcher reads on its next look and then exits. That costs up
-//! to one interval, and buys not needing to reach into another process at all.
-//!
-//! Liveness is a heartbeat rather than a pid check: a watcher stamps the file
-//! every look, and one that has missed several is presumed gone. A pid says
-//! nothing useful anyway once the number has been handed to something else.
+//! A stopped watcher's record stays, so `watch log` still answers. The one thing
+//! deplyd removes anywhere is a finished record over a month old and not among
+//! the newest ten - see [`tidy`].
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Missed heartbeats before a watcher is presumed gone. Three intervals is long
-/// enough to survive a slow look and short enough to notice a crash.
+/// Long enough to survive a slow look, short enough to notice a crash.
 const MISSED_BEFORE_GONE: u32 = 3;
 
 /// Finished records kept however old they are, so the last few logs stay
@@ -31,12 +23,9 @@ pub const KEEP_FINISHED: usize = 10;
 /// How long a finished record is kept past those, in seconds. Thirty days.
 pub const KEEP_FOR: i64 = 30 * 24 * 60 * 60;
 
-/// The shortest grace, whatever the interval.
-///
-/// Three times ten seconds is not long enough to survive one slow request, let
-/// alone a hook taking its full timeout. Being wrongly called lost is not a
-/// cosmetic error: `request_stop` refuses anything that is not live, so a
-/// healthy watcher would become unstoppable.
+/// The shortest grace, whatever the interval. Three times ten seconds does not
+/// survive one hook taking its full timeout, and a watcher wrongly called lost
+/// is one `request_stop` then refuses to stop.
 const SHORTEST_GRACE: i64 = 90;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,12 +94,9 @@ impl Watcher {
         std::fs::write(self.path(), text)
     }
 
-    /// Takes on whatever another process has written since this one loaded the
-    /// record, and stamps the time.
-    ///
-    /// Split out from the writing so it can be tested without a config
-    /// directory, because this is the whole of why stopping works: writing back
-    /// what we remember would wipe the very request we are about to look for.
+    /// Takes on whatever another process wrote since this one loaded the record,
+    /// and stamps the time. Writing back what we remember instead would wipe the
+    /// very stop request we are about to look for.
     pub fn absorb(&mut self, on_disk: Option<&Watcher>, at: i64) {
         if let Some(fresh) = on_disk {
             self.stop_requested = fresh.stop_requested;
@@ -119,9 +105,8 @@ impl Watcher {
         self.last_seen = at;
     }
 
-    /// Stamps the file so `watchers` can tell it is still going, and says
-    /// whether someone has asked it to stop. One look at the file, not two:
-    /// reading after writing would only ever see what we just wrote.
+    /// Stamps the file and says whether someone has asked it to stop. Read
+    /// before the write: the other order only ever sees what we just wrote.
     pub fn beat(&mut self) -> bool {
         let on_disk = load(&self.path());
         self.absorb(on_disk.as_ref(), now());
@@ -191,8 +176,7 @@ pub fn load(path: &Path) -> Option<Watcher> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
-/// Every record, newest first. Unreadable ones are skipped rather than fatal:
-/// one bad file should not hide the rest.
+/// Every record, newest first. One bad file should not hide the rest.
 pub fn all() -> Vec<Watcher> {
     let Ok(entries) = std::fs::read_dir(directory()) else {
         return Vec::new();
@@ -227,8 +211,7 @@ pub fn find(id: &str) -> Result<Watcher, String> {
     }
 }
 
-/// Asks a watcher to stop. It notices on its next look, which is why this says
-/// how long that could be rather than pretending it is immediate.
+/// Asks a watcher to stop. It notices on its next look, not now.
 pub fn request_stop(id: &str) -> Result<Watcher, String> {
     let mut watcher = find(id)?;
     if !watcher.is_live() {
@@ -241,8 +224,7 @@ pub fn request_stop(id: &str) -> Result<Watcher, String> {
     Ok(watcher)
 }
 
-/// A short, unique-enough name. Time and pid together, which cannot collide on
-/// one machine: two watchers started in the same second have different pids.
+/// Time and pid together: two watchers started in the same second differ.
 pub fn new_id(pid: u32) -> String {
     format!("{:x}{:04x}", now(), pid & 0xffff)
 }

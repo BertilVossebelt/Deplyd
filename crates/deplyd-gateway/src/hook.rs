@@ -1,9 +1,7 @@
 //! Running a hook: the one place deplyd starts a program it did not choose.
 //!
 //! Everything else here is a fixed verb against `git` or `gh`. A hook is the
-//! user's own script, and what it does is the user's business - deplyd's part is
-//! only to start it and hand it the facts. That makes the contract narrow on
-//! purpose:
+//! user's own script, so the contract is narrow on purpose:
 //!
 //! - the script is executed directly, never through a shell, so nothing in the
 //!   payload can become a command;
@@ -60,12 +58,9 @@ impl Outcome {
     }
 }
 
-/// How to start a script, which is not the same question on every platform.
-///
 /// A `.ps1` cannot be executed directly on Windows and a `.sh` is not executable
-/// on its own there either, so the interpreter is named. Anything else is run as
-/// itself and the OS decides - a shebang on unix, an executable or `.cmd` on
-/// Windows. The interpreter is chosen from the extension, never from the payload.
+/// there either, so those name an interpreter - chosen from the extension, never
+/// from the payload. Anything else is run as itself and the OS decides.
 fn program_for(path: &Path) -> (String, Vec<String>) {
     let script = path.display().to_string();
     match path
@@ -107,16 +102,14 @@ pub fn run(path: &Path, payload: &str, timeout: Duration) -> Result<Outcome, Hoo
             reason: error.to_string(),
         })?;
 
-    // Written and then dropped, so the hook sees end-of-input and can finish.
-    // One event is far smaller than a pipe buffer, so this cannot block even
-    // against a hook that never reads it.
+    // Dropped after writing, so the hook sees end-of-input. One event is far
+    // smaller than a pipe buffer, so this cannot block.
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(payload.as_bytes());
     }
 
-    // Drained on its own thread rather than after the wait. A pipe nobody reads
-    // fills and then blocks the writer, so a chatty hook would hang against the
-    // very timeout meant to catch it - and the read would never be reached.
+    // Drained on its own thread: a pipe nobody reads fills and blocks the
+    // writer, so a chatty hook would hang before the timeout could catch it.
     let draining = child.stderr.take().map(|mut pipe| {
         std::thread::spawn(move || {
             use std::io::Read;
@@ -145,12 +138,10 @@ pub fn run(path: &Path, payload: &str, timeout: Duration) -> Result<Outcome, Hoo
             Ok(None) if started.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
-                // Not joined. The kill reaches the hook, not anything the hook
+                // Not joined: the kill reaches the hook, not what the hook
                 // started - `sh` running `sleep 30` leaves `sleep` behind - and
-                // that survivor keeps the stderr pipe open, so a join here would
-                // wait out the hang the timeout exists to cut short. The thread
-                // is left to finish on its own once the last writer is gone,
-                // and nobody needed what it read.
+                // that survivor holds the stderr pipe open, so joining would
+                // wait out the very hang the timeout cut short.
                 drop(draining);
                 return Err(HookError::TimedOut {
                     path: path.to_path_buf(),

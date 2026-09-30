@@ -5,18 +5,13 @@ use anstyle::{Color, RgbColor, Style};
 /// The palette. One tonal family, muted rather than washed: a verdict should
 /// read as a verdict, not as an alarm.
 ///
-/// Tuned for a dark terminal, which is what almost everyone has. It cannot be
-/// tuned for both: teal, sage and amber are high-luminance hues, so against
-/// white they sit near 2:1 whatever their chroma, and the only lever that would
-/// fix that is the lightness a dark background needs. Against #1e1e1e these run
-/// 4.7 to 8.7.
+/// Tuned for a dark terminal, which cannot also suit a light one: teal, sage and
+/// amber are high-luminance hues and sit near 2:1 against white whatever their
+/// chroma. Against #1e1e1e these run 4.7 to 8.7.
 ///
-/// 24-bit rather than the 256-colour cube, which has six levels per channel and
-/// so could only offer these hues or a full step paler - too pale to keep the
-/// character. Not the basic sixteen either: every terminal theme remaps those,
-/// so "red" was whatever red the theme felt like rather than a colour anyone
-/// chose. anstream degrades this for a legacy Windows console and drops it
-/// entirely for a pipe or NO_COLOR.
+/// 24-bit, since the 256-colour cube could only offer these or a step paler, and
+/// every theme remaps the basic sixteen. anstream degrades it for a legacy
+/// Windows console and drops it for a pipe or NO_COLOR.
 ///
 /// Named for the job, not the hue. The hue is the part that changes.
 const fn ink(r: u8, g: u8, b: u8) -> Style {
@@ -31,10 +26,8 @@ pub const OK: Style = ink(0x59, 0xc5, 0x59);
 pub const WARN: Style = ink(0xf3, 0xab, 0x3f);
 /// Not deployd, reverted, and the line a run stops on. Soft red.
 ///
-/// Lighter than this and it reads as pink however much chroma it carries, so
-/// this one is the only colour that had to come down as well as along. Held at
-/// this lightness rather than lower because it is the one colour here that a
-/// dark background does not flatter: 4.7 against #1e1e1e, just past AA.
+/// Lighter and it reads as pink whatever its chroma, so this is the one colour
+/// that had to come down as well as along: 4.7 against #1e1e1e, just past AA.
 pub const BAD: Style = ink(0xea, 0x53, 0x53);
 /// Detail beside the thing it belongs to. Neutral grey, not the theme's.
 pub const DIM: Style = ink(0x9a, 0x9a, 0x9a);
@@ -43,8 +36,8 @@ pub const BOLD: Style = Style::new().bold();
 /// The column values line up in, so a verdict and the fields under it share an edge.
 pub const FIELD: usize = 10;
 
-/// Marks beside a verdict. Tied to colour support, which is the same question as
-/// "is a person reading this": a pipe or NO_COLOR gets plain ASCII.
+/// Marks beside a verdict. Tied to colour support, which asks the same thing:
+/// a pipe or NO_COLOR gets plain ASCII.
 pub struct Glyphs {
     pub ok: &'static str,
     pub warn: &'static str,
@@ -203,8 +196,7 @@ mod tests {
 
     #[test]
     fn an_overfull_prefix_still_shows_something() {
-        // The columns before the title can exceed the terminal on their own. Showing
-        // a sliver beats showing an empty column.
+        // The columns before the title can exceed the terminal on their own.
         let fitted = fit_to("a subject", 200, 80);
         assert!(!fitted.is_empty());
     }
