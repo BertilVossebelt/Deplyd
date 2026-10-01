@@ -89,6 +89,28 @@ function Find-Gh {
     return ''
 }
 
+# Windows will not overwrite or delete a program that is running, and a background
+# watcher is deplyd running. It will rename one, though, and the watcher carries on
+# from the renamed file. Says whether the file was in use.
+function Clear-Way($path) {
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    try {
+        Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+        return $false
+    } catch {
+        $aside = "$path.$([DateTime]::UtcNow.Ticks).old"
+        Rename-Item -LiteralPath $path -NewName (Split-Path $aside -Leaf) -ErrorAction Stop
+        return $true
+    }
+}
+
+# What Clear-Way set aside on an earlier run, once nothing is running it any more.
+function Remove-SetAside {
+    if (-not (Test-Path -LiteralPath $installDir)) { return }
+    Get-ChildItem -LiteralPath $installDir -Filter '*.exe.*.old' -Force -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+}
+
 function Fail($message) {
     Write-Host ''
     Write-Host $message -ForegroundColor Red
@@ -189,6 +211,15 @@ function Invoke-Uninstall {
 
     $binary = Join-Path $installDir 'deplyd.exe'
     $alias = Join-Path $installDir 'dp.exe'
+
+    # A running deplyd cannot be deleted, and halfway is worse than not at all.
+    $running = @(Get-Process -Name 'deplyd', 'dp' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($installDir, 'OrdinalIgnoreCase') })
+    if ($running) {
+        Fail ("deplyd is still running (pid $($running.Id -join ', ')), most likely as a background watcher.`n" +
+            "Stop it first: deplyd list watchers, then deplyd watch stop <id>, and give it a moment to notice. Nothing was removed.")
+    }
+    Remove-SetAside
 
     # Ours only if this installer made it: a hard link to the binary, or a copy.
     if (Test-Path -LiteralPath $alias) {
@@ -374,7 +405,9 @@ try {
     if (-not (Test-Path $binary)) { Fail 'The archive did not contain deplyd.exe.' }
 
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+    Remove-SetAside
     $installed = Join-Path $installDir 'deplyd.exe'
+    $wasRunning = Clear-Way $installed
     Copy-Item $binary $installed -Force
 
     Write-Host "  installed  $installed" -ForegroundColor DarkGray
@@ -386,13 +419,19 @@ try {
     if ($existing -and $existing.Source -ne $alias) {
         Write-Host "  dp         taken by $($existing.Source), skipped" -ForegroundColor Yellow
     } else {
-        Remove-Item $alias -Force -ErrorAction SilentlyContinue
+        # A watcher started as dp holds this name rather than deplyd.exe.
+        if (Clear-Way $alias) { $wasRunning = $true }
         try {
             New-Item -ItemType HardLink -Path $alias -Value $installed -ErrorAction Stop | Out-Null
         } catch {
             Copy-Item $installed $alias -Force
         }
         Write-Host '  dp         short name for deplyd' -ForegroundColor DarkGray
+    }
+
+    if ($wasRunning) {
+        Write-Host '  running    deplyd was in use, most likely by a background watcher.' -ForegroundColor Yellow
+        Write-Host '             It keeps the old version until restarted: deplyd list watchers' -ForegroundColor Yellow
     }
 } finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
