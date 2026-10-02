@@ -14,28 +14,8 @@ Built for the case where you cannot change anything: no access to the servers, n
 authority over the deploy workflows, no pipeline step you are allowed to add. It
 installs nothing into your repository.
 
-```bash
-$ deplyd status pr 412
-Inspecting production deploys...
+![deplyd reporting what is deployed, checking a pull request, registering a notification hook, and watching a deploy go live](docs/demo.gif)
 
-production  ·  2 targets
-
-  API  services/api
-  ✓ DEPLYD     a1b2c3d  2026-05-14 11:02  Merge pull request #418 from BertilVossebelt/release
-    run        10234567890
-
-  WEB  services/web
-  ! UNCERTAIN  4d5e6f7  2026-05-12 16:41  Merge pull request #401 from BertilVossebelt/release
-    because    run 10234599887 failed
-    run        10221004455
-    skipped    Deploy web bundle
-
-PR #412  feat(billing): add invoice export endpoint
-  merge      9f8e7d6
-
-  API       ✓ DEPLYD       in a1b2c3d
-  WEB       ✗ NOT DEPLYD   deployed 4d5e6f7
-```
 
 ## Install
 
