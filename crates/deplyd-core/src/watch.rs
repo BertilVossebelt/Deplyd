@@ -47,11 +47,14 @@ pub struct Snapshot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub enum Kind {
+    #[serde(rename = "deploy.started")]
     DeployStarted,
+    #[serde(rename = "deploy.succeeded")]
     DeploySucceeded,
+    #[serde(rename = "deploy.failed")]
     DeployFailed,
+    #[serde(rename = "change.live")]
     ChangeLive,
 }
 
@@ -180,6 +183,22 @@ pub fn sample_event_json() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_kind_in_json_is_the_dotted_name_hooks_match_on() {
+        for kind in [
+            Kind::DeployStarted,
+            Kind::DeploySucceeded,
+            Kind::DeployFailed,
+            Kind::ChangeLive,
+        ] {
+            assert_eq!(
+                serde_json::to_string(&kind).unwrap(),
+                format!("\"{}\"", kind.as_str())
+            );
+        }
+        assert!(sample_event_json().contains("\"kind\":\"deploy.succeeded\""));
+    }
 
     fn run(status: &str, conclusion: Option<&str>) -> RunState {
         RunState {
