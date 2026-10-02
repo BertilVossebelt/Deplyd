@@ -85,16 +85,22 @@ try {
     $exe = Join-Path $destination 'deplyd.exe'
     $alias = Join-Path $destination 'dp.exe'
 
-    # A running deplyd holds its own file open. Name it, rather than a lock error.
-    try {
-        Copy-Item $built $exe -Force
-    } catch {
-        $holding = Get-Process -Name 'deplyd', 'dp' -ErrorAction SilentlyContinue
-        if ($holding) { throw "deplyd is running (pid $($holding.Id -join ', ')). Close it and run this again." }
-        throw
+    # A running deplyd, a background watcher say, cannot be overwritten or deleted,
+    # but it can be renamed and carries on from there. Earlier ones go once free.
+    Get-ChildItem -LiteralPath $destination -Filter '*.exe.*.old' -Force -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+    $wasRunning = $false
+    foreach ($path in @($exe, $alias)) {
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        try {
+            Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+        } catch {
+            Rename-Item -LiteralPath $path -NewName "$(Split-Path $path -Leaf).$([DateTime]::UtcNow.Ticks).old"
+            $wasRunning = $true
+        }
     }
 
-    Remove-Item $alias -Force -ErrorAction SilentlyContinue
+    Copy-Item $built $exe -Force
     try {
         New-Item -ItemType HardLink -Path $alias -Value $exe -ErrorAction Stop | Out-Null
     } catch {
@@ -104,6 +110,9 @@ try {
     Write-Host ''
     Write-Host "  built      $exe" -ForegroundColor DarkGray
     Write-Host '  dp         short name for deplyd' -ForegroundColor DarkGray
+    if ($wasRunning) {
+        Write-Host '  running    a deplyd still runs the old build until restarted: deplyd list watchers' -ForegroundColor Yellow
+    }
 
     if ($Persist) {
         # --- the parts that outlive the terminal ---------------------------

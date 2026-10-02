@@ -83,8 +83,11 @@ deplyd_dev() {
     fi
     mkdir -p "$destination" || return 1
 
-    cp "$built" "$destination/deplyd" || return 1
-    chmod +x "$destination/deplyd"
+    # Copied beside it and renamed over it: cp writes into the file a running
+    # watcher is executing, which Linux refuses as text file busy.
+    cp "$built" "$destination/deplyd.new" || return 1
+    chmod +x "$destination/deplyd.new"
+    mv -f "$destination/deplyd.new" "$destination/deplyd" || return 1
     rm -f "$destination/dp"
     ln -s deplyd "$destination/dp" 2>/dev/null || cp "$destination/deplyd" "$destination/dp"
 
