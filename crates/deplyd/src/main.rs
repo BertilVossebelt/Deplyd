@@ -81,7 +81,7 @@ fn main() -> ExitCode {
         Command::Watch {
             action:
                 Some(WatchAction::Startup {
-                    action: Some(StartupAction::Run { id }),
+                    action: StartupAction::Run { id },
                 }),
             ..
         } => {
@@ -104,16 +104,6 @@ fn main() -> ExitCode {
     }
 
     let mut settings = Settings::load();
-
-    if let Command::Watch {
-        action: Some(WatchAction::Startup { action }),
-        ..
-    } = &command
-        && !matches!(action, Some(StartupAction::Run { .. }))
-    {
-        startup(action.as_ref());
-        return ExitCode::SUCCESS;
-    }
 
     if let Command::Watch {
         action: Some(action @ (WatchAction::Stop { .. } | WatchAction::Log { .. })),
@@ -140,7 +130,7 @@ fn main() -> ExitCode {
                 // Housekeeping first, so what the list counts as hidden is
                 // what is actually still there.
                 deplyd_core::watchers::tidy();
-                render::watchers(&deplyd_core::watchers::all());
+                render::watchers(&deplyd_core::watchers::all(), &deplyd_core::startup::all());
                 return ExitCode::SUCCESS;
             }
             ListWhat::Hooks => {
@@ -252,15 +242,26 @@ fn main() -> ExitCode {
     // that took the first look would spend the allowance twice. watcher_id is
     // what tells child from parent - without it the child backgrounds itself
     // again, and deplyd spawns until something stops it.
-    if let (true, Command::Watch { at_startup, .. }, Some(plan)) =
-        (cli::should_detach(&command), &command, &watch_plan)
+    if let (
+        true,
+        Command::Watch {
+            at_startup,
+            startup_id,
+            ..
+        },
+        Some(plan),
+    ) = (cli::should_detach(&command), &command, &watch_plan)
     {
         // Registered first: a watch that cannot be written into the startup
         // folder should say so before one runs that will not come back.
-        if *at_startup && let Err(why) = register_at_startup(&repo) {
-            render::stop(&why, &["Nothing was started.".into()]);
+        let mut startup_id = startup_id.clone().unwrap_or_default();
+        if *at_startup {
+            match register_at_startup(&repo) {
+                Ok(id) => startup_id = id,
+                Err(why) => render::stop(&why, &["Nothing was started.".into()]),
+            }
         }
-        return start_in_background(&context, &repo, plan);
+        return start_in_background(&context, &repo, plan, startup_id);
     }
 
     let (github, slug, web) = open_github(&repo);
@@ -1451,34 +1452,9 @@ fn save_settings(settings: &Settings) {
     }
 }
 
-/// `startup`: the watches that come back when the machine does.
-fn startup(action: Option<&StartupAction>) {
-    use deplyd_core::startup;
-
-    let named = |id: &Option<String>| -> String {
-        match id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
-            Some(id) => id.to_string(),
-            None => render::stop("Which one?", &["deplyd watch startup lists them.".into()]),
-        }
-    };
-
-    match action {
-        None => render::startup_entries(&startup::all(), startup::os_location().ok()),
-        Some(StartupAction::Disable { id }) => match startup::set_enabled(&named(id), false) {
-            Ok(entry) => render::startup_changed(&entry),
-            Err(why) => render::stop(&why, &["deplyd watch startup lists them.".into()]),
-        },
-        Some(StartupAction::Enable { id }) => match startup::set_enabled(&named(id), true) {
-            Ok(entry) => render::startup_changed(&entry),
-            Err(why) => render::stop(&why, &["deplyd watch startup lists them.".into()]),
-        },
-        Some(StartupAction::Run { .. }) => unreachable!("handled before the repo is opened"),
-    }
-}
-
 /// Writes this watch into wherever the machine looks at login. The arguments are
-/// this run's own, minus the flag that asked for it.
-fn register_at_startup(repo: &Repo) -> Result<(), String> {
+/// this run's own, minus the flag that asked for it. Returns the entry's id.
+fn register_at_startup(repo: &Repo) -> Result<String, String> {
     use deplyd_core::startup::{self, Entry};
 
     let exe = std::env::current_exe()
@@ -1496,7 +1472,7 @@ fn register_at_startup(repo: &Repo) -> Result<(), String> {
             existing = startup::set_enabled(&existing.id, true)?;
         }
         render::startup_already(&existing);
-        return Ok(());
+        return Ok(existing.id);
     }
 
     let id = startup::new_id(std::process::id());
@@ -1514,7 +1490,7 @@ fn register_at_startup(repo: &Repo) -> Result<(), String> {
         .map_err(|error| format!("Wrote {}, but not its record: {error}", written.display()))?;
 
     render::startup_registered(&entry);
-    Ok(())
+    Ok(id)
 }
 
 /// What the machine calls at login. Starts the watch, or does nothing if it has
@@ -1531,11 +1507,21 @@ fn run_at_startup(id: Option<&str>) -> ExitCode {
     if !entry.enabled {
         return ExitCode::SUCCESS;
     }
+    // Logging in again without a reboot would otherwise start a second one.
+    let held = deplyd_core::watchers::all();
+    if deplyd_core::watchers::started_by(&held, &entry.id)
+        .next()
+        .is_some()
+    {
+        return ExitCode::SUCCESS;
+    }
 
     // entry.id, not the argument: `find` accepts a prefix, so `startup run abc`
     // for abc123 would write into abc.log while everything else says abc123.
     let log = startup::directory().join(format!("{}.log", entry.id));
-    match deplyd_core::gateway::background::respawn(&entry.args, &log) {
+    let mut args = entry.args.clone();
+    args.extend(["--startup-id".to_string(), entry.id.clone()]);
+    match deplyd_core::gateway::background::respawn(&args, &log) {
         Ok(_) => ExitCode::SUCCESS,
         Err(_) => ExitCode::FAILURE,
     }
@@ -1553,10 +1539,7 @@ fn watchers(action: &WatchAction) {
                     &["deplyd list watchers lists them.".into()],
                 );
             };
-            match watchers::request_stop(id) {
-                Ok(watcher) => render::watcher_stopping(&watcher),
-                Err(why) => render::stop(&why, &["deplyd list watchers lists them.".into()]),
-            }
+            stop_watcher_or_boot_entry(id);
         }
         WatchAction::Log { id } => {
             let Some(id) = id.as_deref().filter(|id| !id.trim().is_empty()) else {
@@ -1565,7 +1548,9 @@ fn watchers(action: &WatchAction) {
                     &["deplyd list watchers lists them.".into()],
                 );
             };
-            match watchers::find(id) {
+            let found =
+                watchers::find(id).or_else(|why| find_latest_started_by_entry(id).ok_or(why));
+            match found {
                 Ok(watcher) => render::watcher_log(&watcher),
                 Err(why) => render::stop(&why, &["deplyd list watchers lists them.".into()]),
             }
@@ -1577,10 +1562,81 @@ fn watchers(action: &WatchAction) {
     }
 }
 
+/// Finds the newest watcher a boot entry started, so a "next boot" row's id
+/// still has a log to show.
+fn find_latest_started_by_entry(id: &str) -> Option<deplyd_core::watchers::Watcher> {
+    let entry = deplyd_core::startup::find(id).ok()?;
+    // all() is newest first.
+    deplyd_core::watchers::all()
+        .into_iter()
+        .find(|watcher| watcher.startup_id == entry.id)
+}
+
+/// Stops a background watcher and keeps it from coming back at boot, whether the
+/// id names the watcher or the boot entry that starts it.
+fn stop_watcher_or_boot_entry(id: &str) {
+    use deplyd_core::{startup, watchers};
+
+    let hint = ["deplyd list watchers lists them.".to_string()];
+    let (watcher, entry) = match (watchers::find(id), startup::find(id)) {
+        // Both names for one thing: the entry and the watcher it started.
+        (Ok(watcher), Ok(entry)) if watcher.startup_id == entry.id => (Some(watcher), Some(entry)),
+        (Ok(_), Ok(_)) => render::stop(&format!("{id} names more than one."), &hint),
+        (Ok(watcher), Err(_)) => {
+            // An empty id would match every entry as a prefix.
+            let entry = Some(watcher.startup_id.as_str())
+                .filter(|id| !id.is_empty())
+                .and_then(|id| startup::find(id).ok());
+            (Some(watcher), entry)
+        }
+        (Err(_), Ok(entry)) => (None, Some(entry)),
+        (Err(why), Err(_)) => render::stop(&why, &hint),
+    };
+
+    let mut live: Vec<String> = Vec::new();
+    if let Some(watcher) = watcher.filter(watchers::Watcher::is_live) {
+        live.push(watcher.id);
+    }
+    // Every watcher the entry started goes too, not only the one named.
+    let held = watchers::all();
+    let started = entry
+        .iter()
+        .flat_map(|entry| watchers::started_by(&held, &entry.id));
+    for watcher in started {
+        if !live.contains(&watcher.id) {
+            live.push(watcher.id.clone());
+        }
+    }
+
+    let enabled = entry.filter(|entry| entry.enabled);
+    if live.is_empty() && enabled.is_none() {
+        let message = format!("{id} is not running, and does not start at boot.");
+        render::stop(&message, &hint);
+    }
+
+    for id in &live {
+        match watchers::request_stop(id) {
+            Ok(watcher) => render::watcher_stopping(&watcher),
+            Err(why) => render::stop(&why, &hint),
+        }
+    }
+    if let Some(entry) = enabled {
+        match startup::set_enabled(&entry.id, false) {
+            Ok(entry) => render::startup_disabled(&entry),
+            Err(why) => render::stop(&why, &hint),
+        }
+    }
+}
+
 /// Hands the whole watch over to a detached copy of deplyd and returns. The
 /// child gets this command line with the background flag dropped and its id
 /// added, so it runs the watch that was asked for, not a reconstruction.
-fn start_in_background(context: &Context, repo: &Repo, plan: &WatchPlan) -> ExitCode {
+fn start_in_background(
+    context: &Context,
+    repo: &Repo,
+    plan: &WatchPlan,
+    startup_id: String,
+) -> ExitCode {
     use deplyd_core::watchers::{self, Watcher};
 
     // One in, the stalest out: the directory stays bounded for someone who
@@ -1617,6 +1673,7 @@ fn start_in_background(context: &Context, repo: &Repo, plan: &WatchPlan) -> Exit
         stop_requested: false,
         stopped_at: None,
         log: log.display().to_string(),
+        startup_id,
     };
     if let Err(error) = watcher.save() {
         render::stop(

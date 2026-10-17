@@ -148,6 +148,11 @@ pub enum Command {
         #[arg(long = "watcher-id", hide = true, global = true, value_name = "ID")]
         watcher_id: Option<String>,
 
+        /// Hidden: set by the boot entry that started this watch, so its record
+        /// can say so.
+        #[arg(long = "startup-id", hide = true, global = true, value_name = "ID")]
+        startup_id: Option<String>,
+
         #[command(flatten)]
         options: ReportOptions,
     },
@@ -236,18 +241,7 @@ pub enum Change {
 
 #[derive(Debug, Subcommand, Clone)]
 pub enum StartupAction {
-    /// Stop it starting at boot. The file stays; deplyd does not delete
-    Disable {
-        /// The id, or enough of it to be unambiguous
-        id: Option<String>,
-    },
-    /// Start it at boot again
-    Enable {
-        /// The id, or enough of it to be unambiguous
-        id: Option<String>,
-    },
     /// What the machine calls at boot. The shell calls it, people do not
-    #[command(hide = true)]
     Run { id: Option<String> },
 }
 
@@ -267,7 +261,7 @@ pub enum WatchAction {
         reference: Option<String>,
     },
 
-    /// Ask a background watcher to stop. It notices on its next look
+    /// Ask a background watcher to stop, or keep one from starting at boot
     Stop {
         /// The id, or enough of it to be unambiguous
         id: Option<String>,
@@ -279,11 +273,11 @@ pub enum WatchAction {
         id: Option<String>,
     },
 
-    /// Watches that come back when the machine does
-    #[command(infer_subcommands = true, arg_required_else_help = false)]
+    /// What the files written by --at-startup call. `list watchers` shows them
+    #[command(hide = true)]
     Startup {
         #[command(subcommand)]
-        action: Option<StartupAction>,
+        action: StartupAction,
     },
 }
 
@@ -427,12 +421,7 @@ impl Command {
                 Some(WatchAction::Commit { .. }) => "watch commit",
                 Some(WatchAction::Stop { .. }) => "watch stop",
                 Some(WatchAction::Log { .. }) => "watch log",
-                Some(WatchAction::Startup { action }) => match action {
-                    None => "watch startup",
-                    Some(StartupAction::Disable { .. }) => "watch startup disable",
-                    Some(StartupAction::Enable { .. }) => "watch startup enable",
-                    Some(StartupAction::Run { .. }) => "watch startup run",
-                },
+                Some(WatchAction::Startup { .. }) => "watch startup run",
             },
             Command::List { what, .. } => match what {
                 ListWhat::Authors => "list authors",
@@ -704,10 +693,9 @@ mod tests {
         for (line, name) in [
             (vec!["deplyd", "watch", "stop", "abc"], "watch stop"),
             (vec!["deplyd", "watch", "log", "abc"], "watch log"),
-            (vec!["deplyd", "watch", "startup"], "watch startup"),
             (
-                vec!["deplyd", "watch", "startup", "disable", "abc"],
-                "watch startup disable",
+                vec!["deplyd", "watch", "startup", "run", "abc"],
+                "watch startup run",
             ),
             (vec!["deplyd", "list", "watchers"], "list watchers"),
             (vec!["deplyd", "list", "hooks"], "list hooks"),
@@ -719,6 +707,7 @@ mod tests {
         // And the spellings they replaced are gone.
         assert!(Cli::try_parse_from(["deplyd", "watchers"]).is_err());
         assert!(Cli::try_parse_from(["deplyd", "startup"]).is_err());
+        assert!(Cli::try_parse_from(["deplyd", "watch", "startup", "disable", "abc"]).is_err());
 
         // Commands shorten while they stay unambiguous, at both levels.
         let short = Cli::try_parse_from(["deplyd", "li", "env"]).expect("list env should infer");

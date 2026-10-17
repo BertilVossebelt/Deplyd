@@ -48,6 +48,9 @@ pub struct Watcher {
     #[serde(default)]
     pub stopped_at: Option<i64>,
     pub log: String,
+    /// The boot entry that started it, if one did.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub startup_id: String,
 }
 
 /// What a watcher is doing, as far as its file can say.
@@ -189,6 +192,15 @@ pub fn all() -> Vec<Watcher> {
         .collect();
     found.sort_by_key(|watcher| std::cmp::Reverse(watcher.started_at));
     found
+}
+
+/// Finds the running watchers a boot entry started.
+pub fn started_by<'a>(
+    held: &'a [Watcher],
+    startup_id: &'a str,
+) -> impl Iterator<Item = &'a Watcher> {
+    held.iter()
+        .filter(move |watcher| watcher.is_live() && watcher.startup_id == startup_id)
 }
 
 pub fn live() -> Vec<Watcher> {
