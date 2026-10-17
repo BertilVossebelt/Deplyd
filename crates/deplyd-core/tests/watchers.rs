@@ -16,6 +16,7 @@ fn record(every: u64, quiet_for: i64) -> Watcher {
         stop_requested: false,
         stopped_at: None,
         log: "/tmp/repo.log".into(),
+        startup_id: String::new(),
     }
 }
 
@@ -216,4 +217,22 @@ fn one_that_went_quiet_is_dated_from_its_last_heartbeat() {
     assert_eq!(stale.len(), 1);
     assert_eq!(stale[0].id, "quiet001");
     assert_eq!(stale[0].finished_at(), now - 40 * 86_400);
+}
+
+#[test]
+fn a_boot_entry_is_matched_to_the_watcher_it_started_while_that_runs() {
+    let mut booted = record(60, 0);
+    booted.startup_id = "boot1".into();
+    let mut finished = booted.clone();
+    finished.stopped_at = Some(deplyd_core::watchers::now());
+
+    let held = [booted];
+    assert_eq!(deplyd_core::watchers::started_by(&held, "boot1").count(), 1);
+    assert_eq!(deplyd_core::watchers::started_by(&held, "other").count(), 0);
+    assert!(
+        deplyd_core::watchers::started_by(&[finished], "boot1")
+            .next()
+            .is_none(),
+        "a stopped watcher leaves its entry waiting for the next boot"
+    );
 }

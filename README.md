@@ -60,10 +60,8 @@ deplyd status                     what each target is running, what is pending, 
        watch                      deploys and changes going live, as they happen
        watch pr <number>          the same, until that pull request is live
        watch commit <ref>         the same, for any ref
-       watch stop <id>            ask a background watcher to stop
+       watch stop <id>            ask a background watcher to stop, at boot too
        watch log <id>             what one last said
-       watch startup              watches that come back when the machine does
-       watch startup disable <id> stop one coming back
 
        list environments          environments that -E accepts
        list authors               names that -A accepts
@@ -154,8 +152,8 @@ It implies `--background`.
 
 ```bash
 deplyd watch --at-startup -E production
-deplyd watch startup            # what comes back at boot
-deplyd watch startup disable a1b2c3   # stop it coming back
+deplyd list watchers            # marks it "at startup"
+deplyd watch stop a1b2c3        # stops it, and stops it coming back
 ```
 
 | Platform |                                                                                     |
@@ -164,8 +162,10 @@ deplyd watch startup disable a1b2c3   # stop it coming back
 | macOS    | a LaunchAgent plist in `~/Library/LaunchAgents`                                     |
 | Linux    | a systemd user unit in `~/.config/systemd/user`                                     |
 
-`disable` stops it running but leaves the file in place, and names the path if
-you want to remove it yourself.
+Until the machine has started it, it shows as waiting for the next boot.
+Stopping it also keeps it from starting at boot, but leaves the file in place
+and names the path if you want to remove it yourself. Running the watch with
+`--at-startup` again turns it back on.
 
 Every look costs API requests, more of them the more deploy workflows a repo has, out
 of an hourly allowance shared with `gh`. So be careful not to run it too fast for

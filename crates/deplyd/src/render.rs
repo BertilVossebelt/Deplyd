@@ -1068,12 +1068,28 @@ pub fn stop_free(message: &str, hooks: &[String]) -> ! {
     leave(0);
 }
 
-/// What is watching in the background, and what has finished.
-pub fn watchers(held: &[deplyd_core::watchers::Watcher]) {
+/// Lists the background watchers, marking the ones that come back at boot.
+pub fn watchers(held: &[deplyd_core::watchers::Watcher], booted: &[deplyd_core::startup::Entry]) {
     use deplyd_core::watchers::State;
 
+    // Finished records are kept a month, and the newest ten longer, so there
+    // can be dozens. Everything still running, and enough of what finished to
+    // be useful.
+    const FINISHED_SHOWN: usize = 3;
+
+    let enabled: Vec<_> = booted.iter().filter(|entry| entry.enabled).collect();
+    // A boot entry whose watcher is running shows as that watcher's row.
+    let waiting: Vec<_> = enabled
+        .iter()
+        .filter(|entry| {
+            deplyd_core::watchers::started_by(held, &entry.id)
+                .next()
+                .is_none()
+        })
+        .collect();
+
     println!();
-    if held.is_empty() {
+    if held.is_empty() && waiting.is_empty() {
         println!("{DIM}Nothing watching in the background.{DIM:#}");
         println!();
         println!("  {OK}deplyd watch --background{OK:#}");
@@ -1081,44 +1097,53 @@ pub fn watchers(held: &[deplyd_core::watchers::Watcher]) {
         return;
     }
 
-    // Finished records are kept a month, and the newest ten longer, so there
-    // can be dozens. Everything still running, and enough of what finished to
-    // be useful.
-    const FINISHED_SHOWN: usize = 3;
-
     let (live, finished): (Vec<_>, Vec<_>) = held.iter().partition(|w| w.is_live());
-    let shown: Vec<_> = live
-        .iter()
-        .chain(finished.iter().take(FINISHED_SHOWN))
-        .collect();
     let hidden = finished.len().saturating_sub(FINISHED_SHOWN);
 
-    println!("{ACCENT}Watchers ({} running){ACCENT:#}", live.len());
+    println!(
+        "{ACCENT}Watchers ({} running, {} at startup){ACCENT:#}",
+        live.len(),
+        enabled.len()
+    );
 
     let mark = term::glyphs();
-    for watcher in shown {
+    for watcher in &live {
         let (glyph, style, said) = match watcher.state() {
-            State::Running => (mark.ok, OK, "running".to_string()),
-            State::Stopping => (mark.warn, WARN, "stopping".to_string()),
-            State::Stopped => (mark.dot, DIM, "stopped".to_string()),
-            State::Lost => (mark.bad, BAD, "went quiet".to_string()),
+            State::Stopping => (mark.warn, WARN, "stopping"),
+            _ => (mark.ok, OK, "running"),
         };
-        let whose = if watcher.author.is_empty() {
-            "everyone".to_string()
-        } else {
-            watcher.author.clone()
-        };
-        let where_ = if watcher.environment.is_empty() {
-            String::new()
-        } else {
-            format!("{} - ", watcher.environment)
-        };
-
+        let at_boot = enabled.iter().any(|entry| entry.id == watcher.startup_id);
+        let tag = if at_boot { "  at startup" } else { "" };
         println!(
-            "  {style}{glyph} {:<10}{style:#} {:<10} {DIM}{where_}{whose}, every {}{DIM:#}",
+            "  {style}{glyph} {:<12}{style:#} {:<10} {DIM}{}{DIM:#}{ACCENT}{tag}{ACCENT:#}",
             watcher.id,
             said,
-            spell_duration(std::time::Duration::from_secs(watcher.every_secs))
+            describe_watcher(watcher)
+        );
+        println!("     {DIM}{}{DIM:#}", watcher.repo);
+    }
+
+    for entry in &waiting {
+        println!(
+            "  {DIM}{} {:<12} {:<10} {}{DIM:#}{ACCENT}  at startup{ACCENT:#}",
+            mark.dot,
+            entry.id,
+            "next boot",
+            describe_boot_watch(&entry.args)
+        );
+        println!("     {DIM}{}{DIM:#}", entry.repo);
+    }
+
+    for watcher in finished.iter().take(FINISHED_SHOWN) {
+        let (glyph, style, said) = match watcher.state() {
+            State::Lost => (mark.bad, BAD, "went quiet"),
+            _ => (mark.dot, DIM, "stopped"),
+        };
+        println!(
+            "  {style}{glyph} {:<12}{style:#} {:<10} {DIM}{}{DIM:#}",
+            watcher.id,
+            said,
+            describe_watcher(watcher)
         );
         println!("     {DIM}{}{DIM:#}", watcher.repo);
     }
@@ -1130,8 +1155,41 @@ pub fn watchers(held: &[deplyd_core::watchers::Watcher]) {
             deplyd_core::watchers::directory().display()
         );
     }
-    println!("{DIM}deplyd watch stop <id>, deplyd watch log <id>{DIM:#}");
+    println!("{DIM}deplyd watch stop <id> also keeps one from coming back at startup.{DIM:#}");
+    println!("{DIM}deplyd watch log <id> shows what one last said.{DIM:#}");
     println!();
+}
+
+/// Summarises what a watcher looks at, like "production - Ada, every 1m".
+fn describe_watcher(watcher: &deplyd_core::watchers::Watcher) -> String {
+    let whose = if watcher.author.is_empty() {
+        "everyone"
+    } else {
+        watcher.author.as_str()
+    };
+    let every = spell_duration(std::time::Duration::from_secs(watcher.every_secs));
+    if watcher.environment.is_empty() {
+        return format!("{whose}, every {every}");
+    }
+    format!("{} - {whose}, every {every}", watcher.environment)
+}
+
+/// Shows the watch a boot entry starts, without the flags every entry carries.
+fn describe_boot_watch(args: &[String]) -> String {
+    let mut shown: Vec<&str> = Vec::new();
+    let mut skip_next = false;
+    for arg in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        match arg.as_str() {
+            "--background" | "-B" => {}
+            "--repo-path" => skip_next = true,
+            _ => shown.push(arg),
+        }
+    }
+    shown.join(" ")
 }
 
 pub fn watcher_started(watcher: &deplyd_core::watchers::Watcher) {
@@ -1195,45 +1253,6 @@ pub fn watcher_log(watcher: &deplyd_core::watchers::Watcher) {
     println!();
 }
 
-/// What comes back when the machine does.
-pub fn startup_entries(
-    entries: &[deplyd_core::startup::Entry],
-    location: Option<std::path::PathBuf>,
-) {
-    println!();
-    if entries.is_empty() {
-        println!("{DIM}Nothing starts at boot.{DIM:#}");
-        println!();
-        println!("  {OK}deplyd watch --at-startup{OK:#}");
-        println!();
-        return;
-    }
-
-    let on = entries.iter().filter(|entry| entry.enabled).count();
-    println!("{ACCENT}At startup ({on} on){ACCENT:#}");
-
-    let mark = term::glyphs();
-    for entry in entries {
-        let (glyph, style, said) = if entry.enabled {
-            (mark.ok, OK, "on")
-        } else {
-            (mark.dot, DIM, "off")
-        };
-        println!(
-            "  {style}{glyph} {:<10}{style:#} {:<4} {DIM}{}{DIM:#}",
-            entry.id, said, entry.repo
-        );
-        println!("     {DIM}{}{DIM:#}", entry.os_file);
-    }
-
-    println!();
-    if let Some(location) = location {
-        println!("{DIM}This machine looks in {}{DIM:#}", location.display());
-    }
-    println!("{DIM}deplyd watch startup disable <id> stops one without deleting anything.{DIM:#}");
-    println!();
-}
-
 pub fn startup_registered(entry: &deplyd_core::startup::Entry) {
     println!();
     println!(
@@ -1252,23 +1271,19 @@ pub fn startup_already(entry: &deplyd_core::startup::Entry) {
     println!("{OK}Already starts at boot{OK:#}  {DIM}{}{DIM:#}", entry.id);
     println!();
     println!("  {DIM}{}{DIM:#}", entry.os_file);
-    println!("  {DIM}Nothing new was written; deplyd watch startup lists them.{DIM:#}");
+    println!("  {DIM}Nothing new was written; deplyd list watchers lists them.{DIM:#}");
     println!();
 }
 
-pub fn startup_changed(entry: &deplyd_core::startup::Entry) {
+pub fn startup_disabled(entry: &deplyd_core::startup::Entry) {
     println!();
-    if entry.enabled {
-        println!("{OK}{} starts at boot again{OK:#}", entry.id);
-        println!();
-    } else {
-        println!("{OK}{} will not start at boot{OK:#}", entry.id);
-        println!();
-        println!("  {DIM}The file stays where it is; deplyd does not delete.{DIM:#}");
-        println!("  {DIM}{}{DIM:#}", entry.os_file);
-        println!("  {DIM}Remove it by hand if you want it gone for good.{DIM:#}");
-        println!();
-    }
+    println!("{OK}{} will not start at boot{OK:#}", entry.id);
+    println!();
+    println!("  {DIM}The file stays where it is; deplyd does not delete.{DIM:#}");
+    println!("  {DIM}{}{DIM:#}", entry.os_file);
+    println!("  {DIM}Remove it by hand if you want it gone for good, or run the watch{DIM:#}");
+    println!("  {DIM}with --at-startup again to turn it back on.{DIM:#}");
+    println!();
 }
 
 #[cfg(test)]
