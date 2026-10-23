@@ -1,0 +1,13 @@
+name: Deploy staging
+on:
+  push:
+    branches: [dev]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: echo build
+      - name: Upload
+        run: echo upload
