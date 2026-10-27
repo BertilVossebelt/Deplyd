@@ -62,7 +62,9 @@ pub fn records(
         return Err(NoAuthor);
     }
 
-    let mut args: Vec<&str> = vec!["--no-merges"];
+    // Without --full-history a path filter follows one side of a merge, which hid
+    // everything merged into main from a staging deploy that pulled main in.
+    let mut args: Vec<&str> = vec!["--no-merges", "--full-history"];
     if let Some(name) = author {
         // An author is a name, not a pattern: "Ada [Team]" is an invalid regex,
         // and git failing read as "no changes".

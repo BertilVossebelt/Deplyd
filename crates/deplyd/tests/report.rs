@@ -148,6 +148,37 @@ fn the_status_report_dates_and_labels_every_change() {
 }
 
 #[test]
+fn the_status_report_lists_changes_from_both_sides_of_a_merge() {
+    let sandbox = Sandbox::empty();
+    sandbox.workflow("deploy-production.yml", API_WORKFLOW);
+    sandbox.write("services/api/one.txt", "one");
+    sandbox.commit("feat: the base (#100)");
+
+    // The same change lands on both branches, so the merge leaves the scope as the
+    // first parent had it and a path filter would skip the second parent.
+    sandbox.git(&["switch", "-q", "-c", "side"]);
+    sandbox.write("services/api/two.txt", "two");
+    sandbox.commit("feat: the change on side (#300)");
+    sandbox.git(&["switch", "-q", "main"]);
+    sandbox.write("services/api/two.txt", "two");
+    sandbox.commit("feat: the change on main (#301)");
+    sandbox.git(&["merge", "-q", "--no-ff", "-m", "Merge side", "side"]);
+    let deployed_sha = sandbox.commit("chore: after the merge");
+
+    sandbox.set_origin("acme/widgets");
+    sandbox.stub(
+        "runs-deploy-production.yml.json",
+        &runs_json(500, &deployed_sha),
+    );
+    sandbox.stub("jobs-500.json", &jobs_json(9000, "deploy-api", &[]));
+
+    let (output, _) = sandbox.deplyd_stubbed(&["status", "-A", "Ada Lovelace"]);
+
+    assert!(output.contains("PR #301"), "got:\n{output}");
+    assert!(output.contains("PR #300"), "got:\n{output}");
+}
+
+#[test]
 fn json_and_text_agree_about_the_verdict() {
     let world = deployed(&[]);
 

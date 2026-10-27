@@ -78,7 +78,7 @@ impl Sandbox {
         })
     }
 
-    fn git(&self, args: &[&str]) {
+    pub fn git(&self, args: &[&str]) {
         let all: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
         self.spawn("git", &all);
     }
