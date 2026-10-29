@@ -87,6 +87,13 @@ fn main() -> ExitCode {
         } => {
             return run_at_startup(id.as_deref());
         }
+        Command::Watch {
+            action: Some(WatchAction::Run { id }),
+            ..
+        } => {
+            run_boot_entry(id.as_deref());
+            return ExitCode::SUCCESS;
+        }
         Command::Uninstall => {
             show_uninstall();
             return ExitCode::SUCCESS;
@@ -106,7 +113,12 @@ fn main() -> ExitCode {
     let mut settings = Settings::load();
 
     if let Command::Watch {
-        action: Some(action @ (WatchAction::Stop { .. } | WatchAction::Log { .. })),
+        action:
+            Some(
+                action @ (WatchAction::Stop { .. }
+                | WatchAction::Restart { .. }
+                | WatchAction::Log { .. }),
+            ),
         ..
     } = &command
     {
@@ -281,6 +293,18 @@ fn main() -> ExitCode {
     let mut record = running_as
         .as_deref()
         .and_then(|id| deplyd_core::watchers::find(id).ok());
+
+    // A restarted watcher starts before the one it replaces has gone. Two
+    // looking at once would kick every hook twice.
+    let replaces = match &command {
+        Command::Watch { replaces, .. } => replaces.clone(),
+        _ => None,
+    };
+    if let (Some(replaces), Some(watcher)) = (replaces.as_deref(), record.as_mut())
+        && wait_until_replaced_watcher_stops(replaces, watcher)
+    {
+        return finished(record.as_mut(), options.json, "asked to stop");
+    }
     let deadline = watch_plan
         .as_ref()
         .and_then(|plan| plan.length)
@@ -917,6 +941,22 @@ fn wait_without_going_quiet(
 /// The one way out of the loop, so a record cannot be left saying "running" for
 /// a watcher that finished. Ending on `--for` otherwise reads as "went quiet",
 /// which is what a crash says.
+/// Waits until the watcher this one replaces has stopped, and says whether this
+/// one was asked to stop in the meantime.
+fn wait_until_replaced_watcher_stops(
+    replaced: &str,
+    watcher: &mut deplyd_core::watchers::Watcher,
+) -> bool {
+    let still_live = || deplyd_core::watchers::find(replaced).is_ok_and(|old| old.is_live());
+    while still_live() {
+        if watcher.beat() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    false
+}
+
 fn finished(
     record: Option<&mut deplyd_core::watchers::Watcher>,
     json: bool,
@@ -1516,15 +1556,48 @@ fn run_at_startup(id: Option<&str>) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    // entry.id, not the argument: `find` accepts a prefix, so `startup run abc`
-    // for abc123 would write into abc.log while everything else says abc123.
-    let log = startup::directory().join(format!("{}.log", entry.id));
-    let mut args = entry.args.clone();
-    args.extend(["--startup-id".to_string(), entry.id.clone()]);
-    match deplyd_core::gateway::background::respawn(&args, &log) {
-        Ok(_) => ExitCode::SUCCESS,
+    match start_boot_entry(&entry) {
+        Ok(()) => ExitCode::SUCCESS,
         Err(_) => ExitCode::FAILURE,
     }
+}
+
+/// `watch run`: starts a watch that starts at boot now, without waiting for the
+/// next boot.
+fn run_boot_entry(id: Option<&str>) {
+    let hint = ["deplyd list watchers lists them.".to_string()];
+    let Some(id) = id.map(str::trim).filter(|id| !id.is_empty()) else {
+        render::stop("Which one?", &hint);
+    };
+    let entry = deplyd_core::startup::find(id).unwrap_or_else(|why| render::stop(&why, &hint));
+    if !entry.enabled {
+        let message = format!("{} no longer starts at boot.", entry.id);
+        render::stop(
+            &message,
+            &["Run the watch with --at-startup again to turn it back on.".into()],
+        );
+    }
+    let held = deplyd_core::watchers::all();
+    if let Some(running) = deplyd_core::watchers::started_by(&held, &entry.id).next() {
+        let message = format!("{} is already running, as {}.", entry.id, running.id);
+        render::stop(&message, &hint);
+    }
+    if let Err(why) = start_boot_entry(&entry) {
+        render::stop(&why, &[]);
+    }
+    render::boot_entry_started(&entry);
+}
+
+/// Starts the watch a boot entry keeps, as a detached copy of deplyd.
+fn start_boot_entry(entry: &deplyd_core::startup::Entry) -> Result<(), String> {
+    // entry.id, not the argument: `find` accepts a prefix, so `watch run abc`
+    // for abc123 would write into abc.log while everything else says abc123.
+    let log = deplyd_core::startup::directory().join(format!("{}.log", entry.id));
+    let mut args = entry.args.clone();
+    args.extend(["--startup-id".to_string(), entry.id.clone()]);
+    deplyd_core::gateway::background::respawn(&args, &log)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// `watchers`: what is running in the background, and how to stop it.
@@ -1541,6 +1614,7 @@ fn watchers(action: &WatchAction) {
             };
             stop_watcher_or_boot_entry(id);
         }
+        WatchAction::Restart { id } => restart_watchers(id.as_deref()),
         WatchAction::Log { id } => {
             let Some(id) = id.as_deref().filter(|id| !id.trim().is_empty()) else {
                 render::stop(
@@ -1556,7 +1630,10 @@ fn watchers(action: &WatchAction) {
             }
         }
         // Everything else `watch` can be asked is handled before this point.
-        WatchAction::Pr { .. } | WatchAction::Commit { .. } | WatchAction::Startup { .. } => {
+        WatchAction::Pr { .. }
+        | WatchAction::Commit { .. }
+        | WatchAction::Run { .. }
+        | WatchAction::Startup { .. } => {
             unreachable!("handled earlier")
         }
     }
@@ -1646,17 +1723,8 @@ fn start_in_background(
     let id = watchers::new_id(std::process::id());
     let log = watchers::directory().join(format!("{id}.log"));
 
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
-    // Both flags dropped: the child is the watcher, not another asker. Leaving
-    // --at-startup on would have it register itself all over again.
-    args.retain(|arg| !matches!(arg.as_str(), "--background" | "-B" | "--at-startup"));
-    args.push("--watcher-id".into());
-    args.push(id.clone());
-    // Pinned, so the child is not at the mercy of whatever directory it inherits.
-    if !args.iter().any(|arg| arg == "--repo-path") {
-        args.push("--repo-path".into());
-        args.push(repo.root().display().to_string());
-    }
+    let given: Vec<String> = std::env::args().skip(1).collect();
+    let args = cli::args_for_watcher(&given, &repo.root().display().to_string());
 
     // Written before the child exists: it looks its own record up on the way in,
     // and one that arrives late is a watcher that never heartbeats, never hears
@@ -1674,6 +1742,7 @@ fn start_in_background(
         stopped_at: None,
         log: log.display().to_string(),
         startup_id,
+        args,
     };
     if let Err(error) = watcher.save() {
         render::stop(
@@ -1684,22 +1753,129 @@ fn start_in_background(
             ],
         );
     }
+    if let Err(why) = launch_watcher(&mut watcher, None) {
+        render::stop(&why, &[]);
+    }
 
-    match deplyd_core::gateway::background::respawn(&args, &log) {
+    render::watcher_started(&watcher);
+    ExitCode::SUCCESS
+}
+
+/// Starts the watch a saved record describes, as a detached copy of deplyd.
+fn launch_watcher(
+    watcher: &mut deplyd_core::watchers::Watcher,
+    replaces: Option<&str>, // a watcher it waits for to stop before its first look
+) -> Result<(), String> {
+    let mut args = watcher.args.clone();
+    args.extend(["--watcher-id".to_string(), watcher.id.clone()]);
+    if let Some(replaces) = replaces {
+        args.extend(["--replaces".to_string(), replaces.to_string()]);
+    }
+    match deplyd_core::gateway::background::respawn(&args, Path::new(&watcher.log)) {
         Ok(pid) => {
             watcher.pid = pid;
             let _ = watcher.save();
+            Ok(())
         }
         Err(error) => {
             // The record exists but nothing is running, so it is closed off
             // rather than left looking like something that went quiet.
             watcher.mark_stopped();
-            render::stop(&error.to_string(), &[]);
+            Err(error.to_string())
         }
     }
+}
 
-    render::watcher_started(&watcher);
-    ExitCode::SUCCESS
+/// Stops background watchers and starts each again from the same command line,
+/// so they run the deplyd that is installed now.
+fn restart_watchers(id: Option<&str>) {
+    use deplyd_core::watchers::{self, State, Watcher};
+
+    let hint = ["deplyd list watchers lists them.".to_string()];
+    let chosen: Vec<Watcher> = match id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => {
+            let watcher = watchers::find(id).unwrap_or_else(|why| render::stop(&why, &hint));
+            if !watcher.is_live() {
+                let message = format!("{} is not running.", watcher.id);
+                render::stop(&message, &hint);
+            }
+            vec![watcher]
+        }
+        None => watchers::all()
+            .into_iter()
+            .filter(|watcher| watcher.state() == State::Running)
+            .collect(),
+    };
+    if chosen.is_empty() {
+        render::nothing_to_restart();
+        return;
+    }
+
+    let mut restarting: Vec<(Watcher, Vec<String>)> = Vec::new();
+    for watcher in chosen {
+        let args = find_args_to_restart(&watcher);
+        if args.is_empty() {
+            render::watcher_cannot_restart(&watcher);
+        } else {
+            restarting.push((watcher, args));
+        }
+    }
+    if restarting.is_empty() {
+        return;
+    }
+
+    render::restarting_watchers(restarting.len());
+    let longest = restarting
+        .iter()
+        .map(|(watcher, _)| watcher.every_secs)
+        .max();
+    for (index, (old, args)) in restarting.into_iter().enumerate() {
+        // Ids are time and pid, and these all start from one process in one second.
+        let id = watchers::new_id(std::process::id().wrapping_add(index as u32));
+        let log = watchers::directory().join(format!("{id}.log"));
+        let mut watcher = Watcher {
+            id,
+            pid: 0,
+            started_at: watchers::now(),
+            last_seen: watchers::now(),
+            stop_requested: false,
+            stopped_at: None,
+            log: log.display().to_string(),
+            args,
+            ..old.clone()
+        };
+        let started = watcher
+            .save()
+            .map_err(|error| format!("Could not write its record: {error}"))
+            .and_then(|()| launch_watcher(&mut watcher, Some(&old.id)));
+        if let Err(why) = started {
+            let message = format!("{} did not start again, so it keeps running: {why}", old.id);
+            render::refuse(&message, &[]);
+            continue;
+        }
+        // One that finished in the meantime has nothing left to stop.
+        let _ = watchers::request_stop(&old.id);
+        render::watcher_restarted(&old, &watcher);
+    }
+    render::restart_takeover(longest.unwrap_or(0));
+}
+
+/// Finds the command line to start a watcher again with: its own, or the one its
+/// boot entry keeps for a watcher started before deplyd remembered it. Empty
+/// when there is neither.
+fn find_args_to_restart(watcher: &deplyd_core::watchers::Watcher) -> Vec<String> {
+    if !watcher.args.is_empty() {
+        return watcher.args.clone();
+    }
+    if watcher.startup_id.is_empty() {
+        return Vec::new();
+    }
+    let Ok(entry) = deplyd_core::startup::find(&watcher.startup_id) else {
+        return Vec::new();
+    };
+    let mut given = entry.args;
+    given.extend(["--startup-id".to_string(), entry.id]);
+    cli::args_for_watcher(&given, &entry.repo)
 }
 
 /// `hooks`: the scripts a watcher kicks, and the three things you do to them.

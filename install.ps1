@@ -429,9 +429,9 @@ try {
         Write-Host '  dp         short name for deplyd' -ForegroundColor DarkGray
     }
 
+    # A watcher keeps running the old version, so it is started again on this one.
     if ($wasRunning) {
-        Write-Host '  running    deplyd was in use, most likely by a background watcher.' -ForegroundColor Yellow
-        Write-Host '             It keeps the old version until restarted: deplyd list watchers' -ForegroundColor Yellow
+        & $installed watch restart
     }
 } finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue

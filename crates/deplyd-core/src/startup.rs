@@ -4,7 +4,7 @@
 //! a LaunchAgent plist on macOS, a systemd user unit on Linux. No installer, no
 //! privileges.
 //!
-//! The file runs `deplyd watch startup run <id>`, not the watch itself. deplyd
+//! The file runs `deplyd watch run <id>`, not the watch itself. deplyd
 //! does not remove startup files, so turning one off is a line in the record it
 //! consults rather than a deletion nobody can undo.
 
@@ -136,7 +136,7 @@ pub fn os_file(platform: Platform, id: &str, exe: &str) -> (String, String) {
         // Windowless, so logging in does not flash a console at you.
         return (
             format!("deplyd-{id}.cmd"),
-            format!("@echo off\r\nstart \"\" /b \"{exe}\" watch startup run {id}\r\n"),
+            format!("@echo off\r\nstart \"\" /b \"{exe}\" watch run {id}\r\n"),
         );
     }
     if platform == Platform::MacOs {
@@ -152,7 +152,6 @@ pub fn os_file(platform: Platform, id: &str, exe: &str) -> (String, String) {
   <array>
     <string>{exe}</string>
     <string>watch</string>
-    <string>startup</string>
     <string>run</string>
     <string>{id}</string>
   </array>
@@ -176,7 +175,7 @@ pub fn os_file(platform: Platform, id: &str, exe: &str) -> (String, String) {
              Type=oneshot\n\
              RemainAfterExit=yes\n\
              KillMode=process\n\
-             ExecStart={exe} watch startup run {id}\n\n\
+             ExecStart={exe} watch run {id}\n\n\
              [Install]\n\
              WantedBy=default.target\n"
         ),
