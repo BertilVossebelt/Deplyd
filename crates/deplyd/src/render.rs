@@ -1172,6 +1172,7 @@ pub fn watchers(held: &[deplyd_core::watchers::Watcher], booted: &[deplyd_core::
         );
     }
     println!("{DIM}deplyd watch stop <id> also keeps one from coming back at startup.{DIM:#}");
+    println!("{DIM}deplyd watch restart starts them again on this version.{DIM:#}");
     println!("{DIM}deplyd watch log <id> shows what one last said.{DIM:#}");
     println!();
 }
@@ -1241,6 +1242,48 @@ pub fn watcher_stopping(watcher: &deplyd_core::watchers::Watcher) {
     println!();
 }
 
+pub fn nothing_to_restart() {
+    println!("{DIM}No watchers running, so nothing to restart.{DIM:#}");
+}
+
+pub fn watcher_cannot_restart(watcher: &deplyd_core::watchers::Watcher) {
+    refuse(
+        &format!("{} cannot be restarted, so it keeps running.", watcher.id),
+        &[
+            "It was started before deplyd remembered how. Stop it and start it again:".into(),
+            format!("deplyd watch stop {}", watcher.id),
+        ],
+    );
+}
+
+pub fn restarting_watchers(count: usize) {
+    let watchers = if count == 1 { "watcher" } else { "watchers" };
+    println!();
+    println!("{OK}Restarting {count} {watchers}{OK:#}");
+}
+
+pub fn restart_takeover(longest_every: u64) {
+    println!(
+        "  {DIM}Each takes over once the old one stops, up to {} from now.{DIM:#}",
+        spell_duration(std::time::Duration::from_secs(longest_every))
+    );
+    println!();
+}
+
+pub fn watcher_restarted(
+    old: &deplyd_core::watchers::Watcher,
+    new: &deplyd_core::watchers::Watcher,
+) {
+    let mark = term::glyphs();
+    println!(
+        "  {OK}{} {:<12}{OK:#} {DIM}was {}, {}{DIM:#}",
+        mark.ok,
+        new.id,
+        old.id,
+        describe_watcher(new)
+    );
+}
+
 /// The tail of what one watcher said. The first question about a watcher that
 /// stopped is always what it last printed.
 pub fn watcher_log(watcher: &deplyd_core::watchers::Watcher) {
@@ -1288,6 +1331,15 @@ pub fn startup_already(entry: &deplyd_core::startup::Entry) {
     println!();
     println!("  {DIM}{}{DIM:#}", entry.os_file);
     println!("  {DIM}Nothing new was written; deplyd list watchers lists them.{DIM:#}");
+    println!();
+}
+
+pub fn boot_entry_started(entry: &deplyd_core::startup::Entry) {
+    println!();
+    println!("{OK}Started {}{OK:#}", entry.id);
+    println!();
+    println!("  {DIM}{}{DIM:#}", describe_boot_watch(&entry.args));
+    println!("  {DIM}deplyd list watchers shows it once it has taken its first look.{DIM:#}");
     println!();
 }
 

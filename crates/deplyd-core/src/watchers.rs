@@ -51,6 +51,10 @@ pub struct Watcher {
     /// The boot entry that started it, if one did.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub startup_id: String,
+    /// The command line it runs, without its id, so `watch restart` can start it
+    /// again. Empty for watchers started before deplyd kept it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
 }
 
 /// What a watcher is doing, as far as its file can say.
