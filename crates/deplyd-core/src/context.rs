@@ -420,6 +420,25 @@ impl Context {
         matched
     }
 
+    /// Deploy workflows that no detected environment claims, so no report covers them.
+    pub fn unclaimed_deploy_workflows(&self) -> Vec<usize> {
+        // With no environments at all, every deploy workflow is reported.
+        if self.environments.is_empty() {
+            return Vec::new();
+        }
+
+        let claimed: Vec<usize> = self
+            .environments
+            .iter()
+            .flat_map(|name| self.workflows_for_environment(name))
+            .collect();
+        self.deploy_workflows
+            .iter()
+            .copied()
+            .filter(|index| !claimed.contains(index))
+            .collect()
+    }
+
     /// The scope set by hand for a label, if there is one.
     pub fn scope_override(&self, label: &str) -> Option<Vec<String>> {
         let overrides = self.overrides.as_ref()?;

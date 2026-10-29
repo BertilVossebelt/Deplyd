@@ -143,6 +143,23 @@ const CASES: &[Case] = &[
         reject: &[],
     },
     Case {
+        fixture: "unclaimed-deploy",
+        name: "a deploy workflow no environment claims is still listed",
+        args: &["config"],
+        expect: &[
+            "Unclaimed      1 deploy workflow(s)",
+            "               deploy.yml",
+        ],
+        reject: &[],
+    },
+    Case {
+        fixture: "no-environments",
+        name: "with no environments nothing counts as unclaimed",
+        args: &["config"],
+        expect: &[],
+        reject: &["Unclaimed"],
+    },
+    Case {
         fixture: "override",
         name: ".deplyd.json overrides the pattern and pins workflows",
         args: &["config"],

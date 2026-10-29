@@ -808,6 +808,22 @@ pub fn config(context: &Context) {
             "{DIM}               Set scopes and environments in .deplyd.json to cover them.{DIM:#}"
         );
     }
+
+    // Same reasoning: a deploy workflow no environment claims is never reported on.
+    let unclaimed = context.unclaimed_deploy_workflows();
+    if !unclaimed.is_empty() {
+        println!();
+        println!(
+            "{WARN}Unclaimed      {} deploy workflow(s) belong to no environment:{WARN:#}",
+            unclaimed.len()
+        );
+        for index in unclaimed {
+            println!("{WARN}               {}{WARN:#}", context.facts[index].file);
+        }
+        println!(
+            "{DIM}               Name the environment in the file name, a job's environment, or .deplyd.json.{DIM:#}"
+        );
+    }
     println!();
 }
 
