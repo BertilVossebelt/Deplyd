@@ -53,6 +53,7 @@ pub fn draft(context: &Context) -> Override {
         ignore_jobs: context.ignore_jobs.clone(),
         target_jobs: context.target_jobs.clone(),
         scopes,
+        sync_branches: context.sync_branches().to_vec(),
     }
 }
 

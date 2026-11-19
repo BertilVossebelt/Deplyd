@@ -8,6 +8,7 @@ mod support;
 use deplyd_core::context::Context;
 use deplyd_core::github::{GitHub, WorkflowRequest};
 use deplyd_core::repo::Repo;
+use deplyd_core::report::{Entry, hide_sync_pull_requests};
 use deplyd_core::settings::Settings;
 use deplyd_core::targets::{self, ShaSource};
 use deplyd_core::verdict::{self, Status, TargetStatus};
@@ -1032,5 +1033,76 @@ fn a_target_still_in_flight_falls_back_to_when_it_began() {
     assert_eq!(
         target.deployed_at, "2026-01-01T00:00:00Z",
         "the stub job's started_at, not the run's created_at"
+    );
+}
+
+// ---------------------------------------------------------------------------------
+// Sync pull requests
+// ---------------------------------------------------------------------------------
+
+fn pr_from(number: u32, branch: &str) -> String {
+    format!(
+        "{{\"number\":{number},\"title\":\"sync\",\"state\":\"closed\",\
+          \"merged_at\":\"2026-01-02T00:00:00Z\",\"head\":{{\"ref\":\"{branch}\"}}}}"
+    )
+}
+
+fn entry(id: &str, pull_request: Option<u32>) -> Entry {
+    Entry {
+        when: 0,
+        author: "Ada Lovelace".into(),
+        date: "2026-01-02 00:00".into(),
+        label: "API".into(),
+        sha: id.into(),
+        id: id.into(),
+        pull_request,
+        title: "a change".into(),
+    }
+}
+
+fn ids(entries: &[Entry]) -> Vec<&str> {
+    entries.iter().map(|entry| entry.id.as_str()).collect()
+}
+
+#[test]
+fn a_pull_request_from_a_sync_branch_is_hidden_and_remembered() {
+    let stub = StubGitHub::new()
+        .pull_request(1, &pr_from(1, "main"))
+        .pull_request(2, &pr_from(2, "feature/thing"));
+    let github = GitHub::new(Box::new(stub), "acme".into(), "widgets".into());
+    let entries = vec![
+        entry("PR #1", Some(1)),
+        entry("PR #2", Some(2)),
+        entry("PR #3", Some(3)),
+        entry("a1b2c3d", None),
+    ];
+    let sync_branches = vec!["main".to_string(), "staging".to_string()];
+    let temp = TempCache::new("sync");
+
+    let mut cache = temp.open();
+    let kept = hide_sync_pull_requests(entries.clone(), &sync_branches, &github, &mut cache);
+    // PR #3 could not be read, so it stays rather than being guessed away.
+    assert_eq!(ids(&kept), ["PR #2", "PR #3", "a1b2c3d"]);
+
+    // A GitHub that knows no pull requests at all: the branch has to come from disk.
+    let forgetful = GitHub::new(Box::new(StubGitHub::new()), "acme".into(), "widgets".into());
+    let mut cache = temp.open();
+    let kept = hide_sync_pull_requests(entries, &sync_branches, &forgetful, &mut cache);
+    assert_eq!(ids(&kept), ["PR #2", "PR #3", "a1b2c3d"]);
+}
+
+#[test]
+fn without_sync_branches_nothing_is_hidden() {
+    let stub = StubGitHub::new().pull_request(1, &pr_from(1, "main"));
+    let github = GitHub::new(Box::new(stub), "acme".into(), "widgets".into());
+    let entries = vec![entry("PR #1", Some(1))];
+    let temp = TempCache::new("no-sync");
+
+    let mut cache = temp.open();
+    let kept = hide_sync_pull_requests(entries, &[], &github, &mut cache);
+    assert_eq!(ids(&kept), ["PR #1"]);
+    assert!(
+        cache.branch_for_pull_request(1).is_none(),
+        "nothing was looked up"
     );
 }

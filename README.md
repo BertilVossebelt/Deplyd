@@ -287,7 +287,8 @@ fixes.
   "scopes": {
     "API": ["services/api"],
     "WEB": ["services/web"]
-  }
+  },
+  "syncBranches": ["main", "staging"]
 }
 ```
 
@@ -299,6 +300,7 @@ fixes.
 | `ignoreJobs`                    | a job showing up as a target that should not                                |
 | `targetJobs`                    | a job that should be a target and is not                                    |
 | `scopes`                        | which paths a target covers. Keyed by the label reported                    |
+| `syncBranches`                  | a squash-merged pull request from one of these branches, like `main` into `staging`, showing up as a change. Costs one GitHub request per pull request, once |
 
 ### What detection looks for
 

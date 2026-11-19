@@ -5,7 +5,7 @@ use std::io::Write;
 use anstream::{eprintln, println};
 
 use deplyd_core::context::Context;
-use deplyd_core::report::{Status as StatusReport, entry_width};
+use deplyd_core::report::{Entry, Status as StatusReport, entry_width};
 use deplyd_core::targets::{ShaSource, Target, TargetSet};
 use deplyd_core::verdict::{
     Change, PullRequestReport, PullRequestTargetReport, Status, TargetStatus,
@@ -107,12 +107,19 @@ pub struct Page {
     pub skip: usize,
 }
 
+/// What each target has waiting, in target order, and how much of it to show.
+pub struct Pending {
+    /// `None` for a target with no default branch to compare against.
+    pub lists: Vec<Option<Vec<Entry>>>,
+    pub page: Page,
+}
+
 pub fn target_summary(
     context: &Context,
     targets: &TargetSet,
     repo: &deplyd_core::repo::Repo,
     web: &WebBase,
-    pending: Option<Page>,
+    pending: Option<&Pending>,
 ) {
     let mark = term::glyphs();
 
@@ -127,7 +134,7 @@ pub fn target_summary(
         println!();
     }
 
-    for target in &targets.targets {
+    for (target_index, target) in targets.targets.iter().enumerate() {
         let scope = if target.scope.is_empty() {
             "everything".to_string()
         } else {
@@ -168,8 +175,9 @@ pub fn target_summary(
             field_styled(label, &step_text(step), WARN);
         }
 
-        if let Some(page) = pending {
-            pending_for_target(context, repo, web, target, page);
+        if let Some(pending) = pending {
+            let list = pending.lists.get(target_index).and_then(Option::as_ref);
+            pending_for_target(context, web, list, pending.page);
         }
 
         println!();
@@ -247,14 +255,8 @@ fn commit_parts(repo: &deplyd_core::repo::Repo, sha: &str) -> (String, String, S
     )
 }
 
-fn pending_for_target(
-    context: &Context,
-    repo: &deplyd_core::repo::Repo,
-    web: &WebBase,
-    target: &Target,
-    page: Page,
-) {
-    let Some(branch) = repo.default_branch() else {
+fn pending_for_target(context: &Context, web: &WebBase, pending: Option<&Vec<Entry>>, page: Page) {
+    let Some(all) = pending else {
         field_styled(
             "pending",
             "cannot tell, no default branch to compare against",
@@ -262,17 +264,6 @@ fn pending_for_target(
         );
         return;
     };
-
-    let range = format!("{}..{}", target.sha, branch);
-    let all = deplyd_core::report::records(
-        repo,
-        &[&range],
-        &target.scope,
-        &target.label,
-        context.author.as_deref(),
-    )
-    .map(|found| deplyd_core::report::merge_records(&found))
-    .unwrap_or_default();
 
     if all.is_empty() {
         return;
