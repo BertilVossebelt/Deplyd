@@ -660,12 +660,18 @@ fn pull_request_target(entry: &PullRequestTargetReport, width: usize, web: &WebB
 
             for (index, later) in entry.changed_after.iter().enumerate() {
                 let label = if index == 0 { "changed after" } else { "" };
-                let used = 2 + width + 2 + verdict + 16 + later.commit.len() + 2;
+                let (id, title, pull_request) =
+                    deplyd_core::report::format_entry(&later.commit, &later.subject);
+                let url = match pull_request {
+                    Some(number) => web.pull_request(number),
+                    None => web.commit(&later.commit),
+                };
+                let used = 2 + width + 2 + verdict + 16 + id.len() + 2;
                 println!(
                     "  {:<width$}  {DIM}{label:<gap$} {}  {}{DIM:#}",
                     "",
-                    later.commit,
-                    term::fit(&later.subject, used),
+                    term::link(&id, &url),
+                    term::fit(&title, used),
                     gap = verdict + 2
                 );
             }
