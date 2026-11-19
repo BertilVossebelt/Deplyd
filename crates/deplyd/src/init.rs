@@ -53,6 +53,7 @@ pub fn draft(context: &Context) -> Override {
         ignore_jobs: context.ignore_jobs.clone(),
         target_jobs: context.target_jobs.clone(),
         scopes,
+        sync_branches: context.sync_branches().to_vec(),
     }
 }
 
@@ -125,6 +126,9 @@ pub fn run(context: &Context, repo: &Repo, force: bool) {
     );
     println!("{DIM}  deployPattern the regex that decided which workflows deploy{DIM:#}");
     println!("{DIM}  ignoreJobs    substrings that keep a job from being a target{DIM:#}");
+    println!(
+        "{DIM}  syncBranches  branches whose pull requests are left out, empty means off{DIM:#}"
+    );
     println!();
 
     if !context.override_location.shared {

@@ -17,6 +17,7 @@ fn record(every: u64, quiet_for: i64) -> Watcher {
         stopped_at: None,
         log: "/tmp/repo.log".into(),
         startup_id: String::new(),
+        args: Vec::new(),
     }
 }
 

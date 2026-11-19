@@ -111,7 +111,7 @@ try {
     Write-Host "  built      $exe" -ForegroundColor DarkGray
     Write-Host '  dp         short name for deplyd' -ForegroundColor DarkGray
     if ($wasRunning) {
-        Write-Host '  running    a deplyd still runs the old build until restarted: deplyd list watchers' -ForegroundColor Yellow
+        Write-Host '  running    a deplyd still runs the old build until restarted: deplyd watch restart' -ForegroundColor Yellow
     }
 
     if ($Persist) {
@@ -127,7 +127,10 @@ try {
         $profilePath = $PROFILE.CurrentUserAllHosts
         $kept = @(Remove-DeplydBlock $profilePath)
         New-Item -ItemType Directory -Path (Split-Path $profilePath) -Force | Out-Null
-        Set-Content -LiteralPath $profilePath -Value ($kept + @(& $exe completions powershell)) -Encoding utf8
+        $block = @(& $exe completions powershell)
+        Set-Content -LiteralPath $profilePath -Value ($kept + $block) -Encoding utf8
+        # The profile was read when this terminal opened, so it gets the new completer too.
+        $block | Out-String | Invoke-Expression
         Write-Host "  completion added to $profilePath" -ForegroundColor DarkGray
 
         Write-Host ''

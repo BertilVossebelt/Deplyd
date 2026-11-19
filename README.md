@@ -61,7 +61,9 @@ deplyd status                     what each target is running, what is pending, 
        watch pr <number>          the same, until that pull request is live
        watch commit <ref>         the same, for any ref
        watch stop <id>            ask a background watcher to stop, at boot too
-       watch log <id>             what one last said
+       watch restart <id>         restart background watchers
+       watch run <id>             start an at-startup watch now
+       watch log <id>             what a watcher last said
 
        list environments          environments that -E accepts
        list authors               names that -A accepts
@@ -87,8 +89,8 @@ deplyd status                     what each target is running, what is pending, 
        update                     whether a newer release is out
        uninstall                  how to remove it from this machine
 ```
-`dp` is the same binary under a shorter name. Each word shortens while it stays
-unambiguous, so `dp li env` and `dp st pr 412` work.
+`dp` is the same binary under a shorter name. Each word shortens as long as it stays
+unambiguous, so commands like `dp li env` or even `dp s p 412 -E s` work.
 
 Every verb offers only the options it acts on, so `deplyd <verb> --help` is the
 short list that applies to it.
@@ -145,6 +147,10 @@ deplyd watch stop a1b2c3        # ask it to stop
 Stopping takes up to one interval: a watcher notices on its next look. Finished
 ones stay in the list, so `deplyd watch log` still works afterwards.
 
+A watcher keeps running the version it started with. `deplyd watch restart`
+stops every running watcher and starts it again on the installed version, or just
+one when you give its id. The installer does this for you after an update.
+
 ### At startup
 
 `--at-startup` also writes the watch into wherever this machine looks at login.
@@ -154,7 +160,11 @@ It implies `--background`.
 deplyd watch --at-startup -E production
 deplyd list watchers            # marks it "at startup"
 deplyd watch stop a1b2c3        # stops it, and stops it coming back
+deplyd watch run d4e5f6         # start it now, without waiting for the next boot
 ```
+
+While one is not running, `list watchers` shows it as "next boot", with the id
+`watch run` takes.
 
 | Platform |                                                                                     |
 |----------|-------------------------------------------------------------------------------------|
@@ -187,14 +197,15 @@ deplyd hooks test              # kick them all with a made-up event
 deplyd hooks remove ./notify.sh
 ```
 
-| Field    |                                                                        |
-|----------|------------------------------------------------------------------------|
-| `kind`   | `deploy.started`, `deploy.succeeded`, `deploy.failed` or `change.live` |
-| `label`  | which target it concerns                                               |
-| `id`     | a run id, a pull request number, or a short sha                        |
-| `title`  | the run's or the change's title                                        |
-| `url`    | where to go and look                                                   |
-| `author` | who wrote the change, absent for a deploy                              |
+| Field         |                                                                        |
+|---------------|------------------------------------------------------------------------|
+| `kind`        | `deploy.started`, `deploy.succeeded`, `deploy.failed` or `change.live` |
+| `environment` | which environment the watcher looks at, absent when there is none      |
+| `label`       | which target it concerns                                               |
+| `id`          | a run id, a pull request number, or a short sha                        |
+| `title`       | the run's or the change's title                                        |
+| `url`         | where to go and look                                                   |
+| `author`      | who wrote the change, absent for a deploy                              |
 
 There are working examples in [example-hooks/](example-hooks/): a desktop
 notification for Windows, macOS and Linux, each landing in the notification
@@ -277,7 +288,8 @@ fixes.
   "scopes": {
     "API": ["services/api"],
     "WEB": ["services/web"]
-  }
+  },
+  "syncBranches": ["main", "staging"]
 }
 ```
 
@@ -289,6 +301,7 @@ fixes.
 | `ignoreJobs`                    | a job showing up as a target that should not                                |
 | `targetJobs`                    | a job that should be a target and is not                                    |
 | `scopes`                        | which paths a target covers. Keyed by the label reported                    |
+| `syncBranches`                  | a squash-merged pull request from one of these branches, like `main` into `staging`, showing up as a change. Costs one GitHub request per pull request, once |
 
 ### What detection looks for
 

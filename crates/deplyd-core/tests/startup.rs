@@ -10,7 +10,7 @@ const EXE: &str = "/usr/local/bin/deplyd";
 
 #[test]
 fn every_platform_calls_deplyd_back_with_the_id() {
-    // The file runs `startup run <id>`, never the watch itself: that
+    // The file runs `watch run <id>`, never the watch itself: that
     // indirection is what lets one be turned off without deleting anything.
     for platform in [Platform::Windows, Platform::MacOs, Platform::Linux] {
         let (name, body) = os_file(platform, "abc123", EXE);
@@ -19,8 +19,8 @@ fn every_platform_calls_deplyd_back_with_the_id() {
             "{platform:?} must pass the id along: {body}"
         );
         assert!(
-            body.contains("watch") && body.contains("startup"),
-            "{platform:?} must call watch startup run: {body}"
+            body.contains("watch") && body.contains("run"),
+            "{platform:?} must call watch run: {body}"
         );
         assert!(
             name.contains("abc123"),
@@ -48,7 +48,7 @@ fn the_macos_file_is_a_plist_that_runs_at_load() {
     assert!(body.contains("com.deplyd.abc123"), "the label: {body}");
 
     // Each argument is its own <string>, or launchd runs one long filename.
-    for piece in ["<string>startup</string>", "<string>run</string>"] {
+    for piece in ["<string>watch</string>", "<string>run</string>"] {
         assert!(body.contains(piece), "missing {piece} in {body}");
     }
     assert_eq!(
@@ -80,7 +80,7 @@ fn the_linux_file_is_a_unit_systemd_will_enable() {
         );
     }
     assert!(
-        body.contains(&format!("ExecStart={EXE} watch startup run abc123")),
+        body.contains(&format!("ExecStart={EXE} watch run abc123")),
         "got {body}"
     );
 }

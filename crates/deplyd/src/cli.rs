@@ -153,6 +153,11 @@ pub enum Command {
         #[arg(long = "startup-id", hide = true, global = true, value_name = "ID")]
         startup_id: Option<String>,
 
+        /// Hidden: set by `watch restart`, so the new watcher waits for the one it
+        /// replaces to stop before its first look.
+        #[arg(long = "replaces", hide = true, global = true, value_name = "ID")]
+        replaces: Option<String>,
+
         #[command(flatten)]
         options: ReportOptions,
     },
@@ -267,13 +272,25 @@ pub enum WatchAction {
         id: Option<String>,
     },
 
+    /// Start a background watcher again, or every running one, on this version
+    Restart {
+        /// The id, or enough of it to be unambiguous
+        id: Option<String>,
+    },
+
+    /// Start a watch that starts at boot now, without waiting for the next boot
+    Run {
+        /// The id, or enough of it to be unambiguous
+        id: Option<String>,
+    },
+
     /// What a background watcher last said
     Log {
         /// The id, or enough of it to be unambiguous
         id: Option<String>,
     },
 
-    /// What the files written by --at-startup call. `list watchers` shows them
+    /// What boot files written before `watch run` existed still call
     #[command(hide = true)]
     Startup {
         #[command(subcommand)]
@@ -420,6 +437,8 @@ impl Command {
                 Some(WatchAction::Pr { .. }) => "watch pr",
                 Some(WatchAction::Commit { .. }) => "watch commit",
                 Some(WatchAction::Stop { .. }) => "watch stop",
+                Some(WatchAction::Restart { .. }) => "watch restart",
+                Some(WatchAction::Run { .. }) => "watch run",
                 Some(WatchAction::Log { .. }) => "watch log",
                 Some(WatchAction::Startup { .. }) => "watch startup run",
             },
@@ -514,6 +533,22 @@ pub fn args_for_startup(given: &[String], repo_root: &str) -> Vec<String> {
     args
 }
 
+/// The command line a background watcher runs. The flags that detach or register
+/// a watch go, or the watcher would start another one, and the repo is pinned so
+/// it does not depend on the directory it inherits.
+pub fn args_for_watcher(given: &[String], repo_root: &str) -> Vec<String> {
+    let mut args: Vec<String> = given
+        .iter()
+        .filter(|arg| !matches!(arg.as_str(), "--background" | "-B" | "--at-startup"))
+        .cloned()
+        .collect();
+    if !args.iter().any(|arg| arg == "--repo-path") {
+        args.push("--repo-path".into());
+        args.push(repo_root.into());
+    }
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,6 +624,29 @@ mod tests {
 
         // What it was asked to watch survives.
         assert!(kept.iter().any(|arg| arg == "production"), "{kept:?}");
+    }
+
+    #[test]
+    fn a_watcher_runs_what_boot_remembers_without_starting_another() {
+        let given: Vec<String> = ["watch", "-E", "production", "--at-startup"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let remembered = args_for_startup(&given, "/repo");
+        let run = args_for_watcher(&remembered, "/elsewhere");
+
+        assert!(
+            !run.iter()
+                .any(|arg| arg == "--background" || arg == "--at-startup"),
+            "or the watcher detaches yet again: {run:?}"
+        );
+        assert_eq!(
+            run.iter().filter(|a| a.as_str() == "--repo-path").count(),
+            1,
+            "{run:?}"
+        );
+        assert!(run.iter().any(|arg| arg == "/repo"), "{run:?}");
+        assert!(run.iter().any(|arg| arg == "production"), "{run:?}");
     }
 
     #[test]
@@ -692,6 +750,8 @@ mod tests {
         // Watching and managing a watcher are the same verb now.
         for (line, name) in [
             (vec!["deplyd", "watch", "stop", "abc"], "watch stop"),
+            (vec!["deplyd", "watch", "restart"], "watch restart"),
+            (vec!["deplyd", "watch", "run", "abc"], "watch run"),
             (vec!["deplyd", "watch", "log", "abc"], "watch log"),
             (
                 vec!["deplyd", "watch", "startup", "run", "abc"],

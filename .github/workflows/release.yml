@@ -220,7 +220,7 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
           SHA: ${{ github.sha }}
         run: |
-          args=(--title "deplyd $TAG" --generate-notes)
+          args=(--title "Deplyd $TAG" --generate-notes)
 
           # A version with a suffix is a prerelease: v0.3.0-rc.1 does not become
           # what "latest release" means, so an installer keeps ignoring it.

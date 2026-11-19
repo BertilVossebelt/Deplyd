@@ -557,6 +557,26 @@ impl GitHub {
         let body = self.get(&Route::PullRequest { number }).ok()?;
         serde_json::from_str(&body).ok()
     }
+
+    /// Fetches several pull requests at once. One that cannot be read is left out.
+    pub fn pull_requests(&self, numbers: &[u32]) -> Vec<PullRequest> {
+        let mut found = Vec::new();
+        for chunk in numbers.chunks(MAX_IN_FLIGHT) {
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = chunk
+                    .iter()
+                    .map(|number| scope.spawn(move || self.pull_request(*number)))
+                    .collect();
+
+                for handle in handles {
+                    if let Ok(Some(pull_request)) = handle.join() {
+                        found.push(pull_request);
+                    }
+                }
+            });
+        }
+        found
+    }
 }
 
 fn deployment_key(run_id: u64, environment: &str) -> String {

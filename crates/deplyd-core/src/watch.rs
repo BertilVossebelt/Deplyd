@@ -74,6 +74,10 @@ impl Kind {
 #[serde(rename_all = "camelCase")]
 pub struct Event {
     pub kind: Kind,
+    /// Which environment the watcher looks at, like "production". Empty when the
+    /// repository has none.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub environment: String,
     /// Which target it concerns.
     pub label: String,
     /// A run id, a pull request number, or a short sha.
@@ -89,16 +93,16 @@ pub struct Event {
 ///
 /// A first look has nothing to compare against, so the caller keeps that one as a
 /// baseline rather than announcing the whole world as news.
-pub fn changes(before: &Snapshot, after: &Snapshot) -> Vec<Event> {
+pub fn changes(before: &Snapshot, after: &Snapshot, environment: &str) -> Vec<Event> {
     let mut events = Vec::new();
 
     for (id, now) in &after.runs {
         match before.runs.get(id) {
             // Announced by where it has got to: a poll can miss the start of
             // a short run.
-            None => events.push(run_event(*id, now, true)),
+            None => events.push(run_event(*id, now, true, environment)),
             Some(was) if !was.finished() && now.finished() => {
-                events.push(run_event(*id, now, false))
+                events.push(run_event(*id, now, false, environment))
             }
             Some(_) => {}
         }
@@ -108,6 +112,7 @@ pub fn changes(before: &Snapshot, after: &Snapshot) -> Vec<Event> {
         if !before.live.contains_key(sha) {
             events.push(Event {
                 kind: Kind::ChangeLive,
+                environment: environment.to_string(),
                 label: change.label.clone(),
                 id: change.id.clone(),
                 title: change.title.clone(),
@@ -120,7 +125,7 @@ pub fn changes(before: &Snapshot, after: &Snapshot) -> Vec<Event> {
     events
 }
 
-fn run_event(id: u64, state: &RunState, first_seen: bool) -> Event {
+fn run_event(id: u64, state: &RunState, first_seen: bool, environment: &str) -> Event {
     let kind = match (state.finished(), state.went_well()) {
         (false, _) => Kind::DeployStarted,
         (true, true) => Kind::DeploySucceeded,
@@ -138,6 +143,7 @@ fn run_event(id: u64, state: &RunState, first_seen: bool) -> Event {
 
     Event {
         kind,
+        environment: environment.to_string(),
         label: state.label.clone(),
         id: id.to_string(),
         title,
@@ -171,6 +177,7 @@ pub fn is_live(snapshot: &Snapshot, sha: &str) -> bool {
 pub fn sample_event_json() -> String {
     let event = Event {
         kind: Kind::DeploySucceeded,
+        environment: "production".to_string(),
         label: "API".to_string(),
         id: "10234567890".to_string(),
         title: "feat(billing): add invoice export endpoint".to_string(),
@@ -198,6 +205,7 @@ mod tests {
             );
         }
         assert!(sample_event_json().contains("\"kind\":\"deploy.succeeded\""));
+        assert!(sample_event_json().contains("\"environment\":\"production\""));
     }
 
     fn run(status: &str, conclusion: Option<&str>) -> RunState {
@@ -258,7 +266,7 @@ mod tests {
             &[(1, run("completed", Some("success")))],
             &[("aaa", "PR #1")],
         );
-        assert!(changes(&one, &one).is_empty());
+        assert!(changes(&one, &one, "production").is_empty());
     }
 
     #[test]
@@ -266,7 +274,7 @@ mod tests {
         let before = Snapshot::default();
         let after = snapshot(&[(1, run("in_progress", None))], &[]);
 
-        let events = changes(&before, &after);
+        let events = changes(&before, &after, "production");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, Kind::DeployStarted);
     }
@@ -276,18 +284,18 @@ mod tests {
         let before = snapshot(&[(1, run("in_progress", None))], &[]);
         let after = snapshot(&[(1, run("completed", Some("success")))], &[]);
 
-        let events = changes(&before, &after);
+        let events = changes(&before, &after, "production");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, Kind::DeploySucceeded);
         // Asked again with nothing new, it stays quiet.
-        assert!(changes(&after, &after).is_empty());
+        assert!(changes(&after, &after, "production").is_empty());
     }
 
     #[test]
     fn a_short_run_seen_only_once_still_reports_how_it_ended() {
         // Polling can miss the start entirely; saying nothing is worse.
         let after = snapshot(&[(7, run("completed", Some("failure")))], &[]);
-        let events = changes(&Snapshot::default(), &after);
+        let events = changes(&Snapshot::default(), &after, "production");
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, Kind::DeployFailed);
@@ -297,7 +305,7 @@ mod tests {
     #[test]
     fn a_conclusion_that_is_not_failure_says_which_it_was() {
         let after = snapshot(&[(7, run("completed", Some("cancelled")))], &[]);
-        let events = changes(&Snapshot::default(), &after);
+        let events = changes(&Snapshot::default(), &after, "production");
         assert_eq!(events[0].title, "deploy cancelled");
     }
 
@@ -306,11 +314,12 @@ mod tests {
         let before = snapshot(&[], &[("aaa", "PR #1")]);
         let after = snapshot(&[], &[("aaa", "PR #1"), ("bbb", "PR #2")]);
 
-        let events = changes(&before, &after);
+        let events = changes(&before, &after, "production");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, Kind::ChangeLive);
         assert_eq!(events[0].id, "PR #2");
         assert_eq!(events[0].author, "Ada");
+        assert_eq!(events[0].environment, "production");
     }
 
     #[test]
@@ -319,6 +328,6 @@ mod tests {
         // that would read as "your change was undone".
         let before = snapshot(&[], &[("aaa", "PR #1"), ("bbb", "PR #2")]);
         let after = snapshot(&[], &[("aaa", "PR #1")]);
-        assert!(changes(&before, &after).is_empty());
+        assert!(changes(&before, &after, "production").is_empty());
     }
 }

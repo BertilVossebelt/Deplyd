@@ -343,6 +343,9 @@ else
     say "  dp         short name for deplyd"
 fi
 
+# A watcher keeps running the old version, so it is started again on this one.
+"$INSTALL_DIR/deplyd" watch restart || true
+
 # --- PATH -------------------------------------------------------------------
 
 case ":$PATH:" in

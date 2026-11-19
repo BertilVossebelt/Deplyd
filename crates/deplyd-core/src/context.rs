@@ -449,6 +449,12 @@ impl Context {
             .map(|(_, paths)| paths.clone())
     }
 
+    pub fn sync_branches(&self) -> &[String] {
+        self.overrides
+            .as_ref()
+            .map_or(&[], |overrides| overrides.sync_branches.as_slice())
+    }
+
     /// "production " or "", for sentences that read the same either way.
     pub fn environment_phrase(&self) -> String {
         if self.environment.is_empty() {

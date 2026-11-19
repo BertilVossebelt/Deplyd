@@ -5,7 +5,7 @@ use std::io::Write;
 use anstream::{eprintln, println};
 
 use deplyd_core::context::Context;
-use deplyd_core::report::{Status as StatusReport, entry_width};
+use deplyd_core::report::{Entry, Status as StatusReport, entry_width};
 use deplyd_core::targets::{ShaSource, Target, TargetSet};
 use deplyd_core::verdict::{
     Change, PullRequestReport, PullRequestTargetReport, Status, TargetStatus,
@@ -107,12 +107,19 @@ pub struct Page {
     pub skip: usize,
 }
 
+/// What each target has waiting, in target order, and how much of it to show.
+pub struct Pending {
+    /// `None` for a target with no default branch to compare against.
+    pub lists: Vec<Option<Vec<Entry>>>,
+    pub page: Page,
+}
+
 pub fn target_summary(
     context: &Context,
     targets: &TargetSet,
     repo: &deplyd_core::repo::Repo,
     web: &WebBase,
-    pending: Option<Page>,
+    pending: Option<&Pending>,
 ) {
     let mark = term::glyphs();
 
@@ -127,7 +134,7 @@ pub fn target_summary(
         println!();
     }
 
-    for target in &targets.targets {
+    for (target_index, target) in targets.targets.iter().enumerate() {
         let scope = if target.scope.is_empty() {
             "everything".to_string()
         } else {
@@ -168,8 +175,9 @@ pub fn target_summary(
             field_styled(label, &step_text(step), WARN);
         }
 
-        if let Some(page) = pending {
-            pending_for_target(context, repo, web, target, page);
+        if let Some(pending) = pending {
+            let list = pending.lists.get(target_index).and_then(Option::as_ref);
+            pending_for_target(context, web, list, pending.page);
         }
 
         println!();
@@ -247,14 +255,8 @@ fn commit_parts(repo: &deplyd_core::repo::Repo, sha: &str) -> (String, String, S
     )
 }
 
-fn pending_for_target(
-    context: &Context,
-    repo: &deplyd_core::repo::Repo,
-    web: &WebBase,
-    target: &Target,
-    page: Page,
-) {
-    let Some(branch) = repo.default_branch() else {
+fn pending_for_target(context: &Context, web: &WebBase, pending: Option<&Vec<Entry>>, page: Page) {
+    let Some(all) = pending else {
         field_styled(
             "pending",
             "cannot tell, no default branch to compare against",
@@ -262,17 +264,6 @@ fn pending_for_target(
         );
         return;
     };
-
-    let range = format!("{}..{}", target.sha, branch);
-    let all = deplyd_core::report::records(
-        repo,
-        &[&range],
-        &target.scope,
-        &target.label,
-        context.author.as_deref(),
-    )
-    .map(|found| deplyd_core::report::merge_records(&found))
-    .unwrap_or_default();
 
     if all.is_empty() {
         return;
@@ -669,12 +660,18 @@ fn pull_request_target(entry: &PullRequestTargetReport, width: usize, web: &WebB
 
             for (index, later) in entry.changed_after.iter().enumerate() {
                 let label = if index == 0 { "changed after" } else { "" };
-                let used = 2 + width + 2 + verdict + 16 + later.commit.len() + 2;
+                let (id, title, pull_request) =
+                    deplyd_core::report::format_entry(&later.commit, &later.subject);
+                let url = match pull_request {
+                    Some(number) => web.pull_request(number),
+                    None => web.commit(&later.commit),
+                };
+                let used = 2 + width + 2 + verdict + 16 + id.len() + 2;
                 println!(
                     "  {:<width$}  {DIM}{label:<gap$} {}  {}{DIM:#}",
                     "",
-                    later.commit,
-                    term::fit(&later.subject, used),
+                    term::link(&id, &url),
+                    term::fit(&title, used),
                     gap = verdict + 2
                 );
             }
@@ -1172,6 +1169,7 @@ pub fn watchers(held: &[deplyd_core::watchers::Watcher], booted: &[deplyd_core::
         );
     }
     println!("{DIM}deplyd watch stop <id> also keeps one from coming back at startup.{DIM:#}");
+    println!("{DIM}deplyd watch restart starts them again on this version.{DIM:#}");
     println!("{DIM}deplyd watch log <id> shows what one last said.{DIM:#}");
     println!();
 }
@@ -1241,6 +1239,48 @@ pub fn watcher_stopping(watcher: &deplyd_core::watchers::Watcher) {
     println!();
 }
 
+pub fn nothing_to_restart() {
+    println!("{DIM}No watchers running, so nothing to restart.{DIM:#}");
+}
+
+pub fn watcher_cannot_restart(watcher: &deplyd_core::watchers::Watcher) {
+    refuse(
+        &format!("{} cannot be restarted, so it keeps running.", watcher.id),
+        &[
+            "It was started before deplyd remembered how. Stop it and start it again:".into(),
+            format!("deplyd watch stop {}", watcher.id),
+        ],
+    );
+}
+
+pub fn restarting_watchers(count: usize) {
+    let watchers = if count == 1 { "watcher" } else { "watchers" };
+    println!();
+    println!("{OK}Restarting {count} {watchers}{OK:#}");
+}
+
+pub fn restart_takeover(longest_every: u64) {
+    println!(
+        "  {DIM}Each takes over once the old one stops, up to {} from now.{DIM:#}",
+        spell_duration(std::time::Duration::from_secs(longest_every))
+    );
+    println!();
+}
+
+pub fn watcher_restarted(
+    old: &deplyd_core::watchers::Watcher,
+    new: &deplyd_core::watchers::Watcher,
+) {
+    let mark = term::glyphs();
+    println!(
+        "  {OK}{} {:<12}{OK:#} {DIM}was {}, {}{DIM:#}",
+        mark.ok,
+        new.id,
+        old.id,
+        describe_watcher(new)
+    );
+}
+
 /// The tail of what one watcher said. The first question about a watcher that
 /// stopped is always what it last printed.
 pub fn watcher_log(watcher: &deplyd_core::watchers::Watcher) {
@@ -1288,6 +1328,15 @@ pub fn startup_already(entry: &deplyd_core::startup::Entry) {
     println!();
     println!("  {DIM}{}{DIM:#}", entry.os_file);
     println!("  {DIM}Nothing new was written; deplyd list watchers lists them.{DIM:#}");
+    println!();
+}
+
+pub fn boot_entry_started(entry: &deplyd_core::startup::Entry) {
+    println!();
+    println!("{OK}Started {}{OK:#}", entry.id);
+    println!();
+    println!("  {DIM}{}{DIM:#}", describe_boot_watch(&entry.args));
+    println!("  {DIM}deplyd list watchers shows it once it has taken its first look.{DIM:#}");
     println!();
 }
 
