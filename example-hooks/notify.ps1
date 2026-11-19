@@ -12,12 +12,18 @@ $payload = [Console]::In.ReadToEnd()
 if ([string]::IsNullOrWhiteSpace($payload)) { exit 0 }
 $event = $payload | ConvertFrom-Json
 
+# Empty when the repository has no environments.
+$environment = $event.environment
+$to = if ($environment) { " to $environment" } else { '' }
+$on = if ($environment) { " on $environment" } else { '' }
+$in = if ($environment) { " in $environment" } else { '' }
+
 # What the event is, said the way a person would say it.
 switch ($event.kind) {
-    'deploy.started'   { $headline = "Deploying $($event.label)" }
-    'deploy.succeeded' { $headline = "$($event.label) is live" }
-    'deploy.failed'    { $headline = "$($event.label) failed to deploy" }
-    'change.live'      { $headline = "Your change is live on $($event.label)" }
+    'deploy.started'   { $headline = "Deploying $($event.label)$to" }
+    'deploy.succeeded' { $headline = "$($event.label) is live$on" }
+    'deploy.failed'    { $headline = "$($event.label) failed to deploy$to" }
+    'change.live'      { $headline = "Your change is live on $($event.label)$in" }
     default            { $headline = "$($event.label): $($event.kind)" }
 }
 

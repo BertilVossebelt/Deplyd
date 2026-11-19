@@ -846,7 +846,7 @@ fn watch_loop(
         // A look that could not read is neither news nor a baseline.
         if look_was_whole(github) {
             if let Some(before) = &previous {
-                for event in deplyd_core::watch::changes(before, &snapshot) {
+                for event in deplyd_core::watch::changes(before, &snapshot, &context.environment) {
                     render::watch_event(&event, options.json, web);
 
                     // After the event is printed, so what deplyd saw is on

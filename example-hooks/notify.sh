@@ -30,12 +30,17 @@ field() {
 kind=$(field kind)
 label=$(field label)
 title=$(field title)
+# Empty when the repository has no environments.
+environment=$(field environment)
+to=${environment:+ to $environment}
+on=${environment:+ on $environment}
+in=${environment:+ in $environment}
 
 case "$kind" in
-  deploy.started)   headline="Deploying $label" ;;
-  deploy.succeeded) headline="$label is live" ;;
-  deploy.failed)    headline="$label failed to deploy" ;;
-  change.live)      headline="Your change is live on $label" ;;
+  deploy.started)   headline="Deploying $label$to" ;;
+  deploy.succeeded) headline="$label is live$on" ;;
+  deploy.failed)    headline="$label failed to deploy$to" ;;
+  change.live)      headline="Your change is live on $label$in" ;;
   *)                headline="$label: $kind" ;;
 esac
 

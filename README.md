@@ -197,14 +197,15 @@ deplyd hooks test              # kick them all with a made-up event
 deplyd hooks remove ./notify.sh
 ```
 
-| Field    |                                                                        |
-|----------|------------------------------------------------------------------------|
-| `kind`   | `deploy.started`, `deploy.succeeded`, `deploy.failed` or `change.live` |
-| `label`  | which target it concerns                                               |
-| `id`     | a run id, a pull request number, or a short sha                        |
-| `title`  | the run's or the change's title                                        |
-| `url`    | where to go and look                                                   |
-| `author` | who wrote the change, absent for a deploy                              |
+| Field         |                                                                        |
+|---------------|------------------------------------------------------------------------|
+| `kind`        | `deploy.started`, `deploy.succeeded`, `deploy.failed` or `change.live` |
+| `environment` | which environment the watcher looks at, absent when there is none      |
+| `label`       | which target it concerns                                               |
+| `id`          | a run id, a pull request number, or a short sha                        |
+| `title`       | the run's or the change's title                                        |
+| `url`         | where to go and look                                                   |
+| `author`      | who wrote the change, absent for a deploy                              |
 
 There are working examples in [example-hooks/](example-hooks/): a desktop
 notification for Windows, macOS and Linux, each landing in the notification
