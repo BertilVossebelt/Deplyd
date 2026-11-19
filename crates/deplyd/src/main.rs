@@ -412,7 +412,7 @@ fn main() -> ExitCode {
                 output.note("  fetching: so the pending list is current...");
             }
 
-            let report = match deplyd_core::report::status(
+            let mut report = match deplyd_core::report::status(
                 &repo,
                 &targets.targets,
                 context.author.as_deref(),
@@ -423,6 +423,8 @@ fn main() -> ExitCode {
                 Ok(report) => report,
                 Err(error) => render::stop(&error.to_string(), &[]),
             };
+            let sync_branches = context.sync_branches();
+            report.hide_sync_pull_requests(sync_branches, &github, &mut cache);
 
             if options.json {
                 let document = verdict::StatusJson {
@@ -447,11 +449,28 @@ fn main() -> ExitCode {
                 };
                 print_json(&document);
             } else {
-                let page = render::Page {
-                    take: options.take as usize,
-                    skip: options.skip as usize,
+                let lists = targets
+                    .targets
+                    .iter()
+                    .map(|target| {
+                        let pending =
+                            deplyd_core::report::pending(&repo, target, context.author.as_deref())?;
+                        Some(deplyd_core::report::hide_sync_pull_requests(
+                            pending,
+                            sync_branches,
+                            &github,
+                            &mut cache,
+                        ))
+                    })
+                    .collect();
+                let pending = render::Pending {
+                    lists,
+                    page: render::Page {
+                        take: options.take as usize,
+                        skip: options.skip as usize,
+                    },
                 };
-                render::target_summary(&context, &targets, &repo, &web, Some(page));
+                render::target_summary(&context, &targets, &repo, &web, Some(&pending));
                 render::status(&context, &targets, &report, &web, depth);
             }
 
@@ -827,7 +846,7 @@ fn watch_loop(
         // A look that could not read is neither news nor a baseline.
         if look_was_whole(github) {
             if let Some(before) = &previous {
-                for event in deplyd_core::watch::changes(before, &snapshot) {
+                for event in deplyd_core::watch::changes(before, &snapshot, &context.environment) {
                     render::watch_event(&event, options.json, web);
 
                     // After the event is printed, so what deplyd saw is on

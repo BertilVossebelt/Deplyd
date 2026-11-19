@@ -27,6 +27,9 @@ struct Document {
     /// job id -> what its checkout resolved to.
     #[serde(default)]
     shas: BTreeMap<String, ResolvedSha>,
+    /// Merged pull request number -> the branch it was opened from.
+    #[serde(default)]
+    pull_request_branches: BTreeMap<String, String>,
     /// Insertion order, oldest first, for pruning.
     #[serde(default)]
     order: Vec<String>,
@@ -107,6 +110,29 @@ impl Cache {
         self.dirty = true;
     }
 
+    pub fn branch_for_pull_request(&self, number: u32) -> Option<&str> {
+        self.document
+            .pull_request_branches
+            .get(&pull_request_key(number))
+            .map(String::as_str)
+    }
+
+    /// Only call for a merged pull request: an open one can still be closed unmerged.
+    pub fn remember_pull_request_branch(&mut self, number: u32, branch: &str) {
+        if self.path.as_os_str().is_empty() || branch.is_empty() {
+            return;
+        }
+        let key = pull_request_key(number);
+        if self.document.pull_request_branches.contains_key(&key) {
+            return;
+        }
+        self.document
+            .pull_request_branches
+            .insert(key.clone(), branch.to_string());
+        self.document.order.push(key);
+        self.dirty = true;
+    }
+
     pub fn save(&mut self) {
         if !self.dirty || self.path.as_os_str().is_empty() {
             return;
@@ -127,6 +153,7 @@ impl Cache {
         while self.document.order.len() > MAX_ENTRIES {
             let oldest = self.document.order.remove(0);
             self.document.shas.remove(&oldest);
+            self.document.pull_request_branches.remove(&oldest);
         }
     }
 
@@ -137,6 +164,11 @@ impl Cache {
     pub fn is_empty(&self) -> bool {
         self.document.shas.is_empty()
     }
+}
+
+/// Apart from the job ids in `order`, which are bare numbers too.
+fn pull_request_key(number: u32) -> String {
+    format!("pr#{number}")
 }
 
 #[cfg(test)]

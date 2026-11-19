@@ -393,6 +393,18 @@ fn init_writes_what_detection_found_and_leaves_the_repo_alone() {
     );
     assert_eq!(code, 0);
 
+    // An empty syncBranches is written too, so the key can be found and filled in.
+    let written = output
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Wrote "))
+        .expect("the path it wrote");
+    let text = std::fs::read_to_string(written.trim()).expect("the written file");
+    assert!(
+        text.contains("\"syncBranches\": []"),
+        "got:
+{text}"
+    );
+
     // Nothing landed in the working tree.
     assert!(
         !sandbox.repo().join(".deplyd.json").exists(),

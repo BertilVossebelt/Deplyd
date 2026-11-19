@@ -91,6 +91,10 @@ pub struct Override {
     /// Keyed by the label deplyd reports.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub scopes: BTreeMap<String, Vec<String>>,
+    /// Branches that are only merged into each other, like `main` into `staging`.
+    /// A pull request from one of them is left out of the change lists. Written
+    /// even when empty, so `config init` shows that the key exists.
+    pub sync_branches: Vec<String>,
 }
 
 impl Override {

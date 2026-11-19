@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
+use crate::cache::Cache;
 use crate::gateway::git::Verb;
+use crate::github::{GitHub, PullRequest};
 use crate::repo::Repo;
 use crate::targets::Target;
 
@@ -204,6 +206,79 @@ pub struct Status {
     pub page: Vec<Entry>,
     pub reverted: Vec<String>,
     pub skip: usize,
+    pub take: usize,
+}
+
+impl Status {
+    /// Leaves out pull requests from a sync branch, then pages what is left.
+    pub fn hide_sync_pull_requests(
+        &mut self,
+        sync_branches: &[String],
+        github: &GitHub,
+        cache: &mut Cache,
+    ) {
+        let live = std::mem::take(&mut self.live);
+        self.live = hide_sync_pull_requests(live, sync_branches, github, cache);
+        self.page = self
+            .live
+            .iter()
+            .skip(self.skip)
+            .take(self.take)
+            .cloned()
+            .collect();
+    }
+}
+
+/// The changes in a target's scope that the default branch has and the target does
+/// not run yet. `None` when there is no default branch to compare against.
+pub fn pending(repo: &Repo, target: &Target, author: Option<&str>) -> Option<Vec<Entry>> {
+    let branch = repo.default_branch()?;
+    let range = format!("{}..{}", target.sha, branch);
+    let found = records(repo, &[&range], &target.scope, &target.label, author);
+    Some(found.map(|found| merge_records(&found)).unwrap_or_default())
+}
+
+/// Leaves out pull requests opened from a sync branch. A squash-merged sync carries
+/// other people's changes under one author, and repeats rows already listed.
+pub fn hide_sync_pull_requests(
+    entries: Vec<Entry>,
+    sync_branches: &[String],
+    github: &GitHub,
+    cache: &mut Cache,
+) -> Vec<Entry> {
+    if sync_branches.is_empty() {
+        return entries;
+    }
+
+    let mut unknown: Vec<u32> = entries
+        .iter()
+        .filter_map(|entry| entry.pull_request)
+        .filter(|number| cache.branch_for_pull_request(*number).is_none())
+        .collect();
+    unknown.sort_unstable();
+    unknown.dedup();
+
+    let merged: Vec<PullRequest> = github
+        .pull_requests(&unknown)
+        .into_iter()
+        .filter(PullRequest::merged)
+        .collect();
+    for pull_request in &merged {
+        cache.remember_pull_request_branch(pull_request.number, pull_request.branch());
+    }
+    cache.save();
+
+    // A pull request that could not be read stays: hiding it would be a guess.
+    entries
+        .into_iter()
+        .filter(|entry| {
+            let Some(number) = entry.pull_request else {
+                return true;
+            };
+            let branch = cache.branch_for_pull_request(number).unwrap_or_default();
+            !sync_branches.iter().any(|sync| sync == branch)
+        })
+        .collect()
 }
 
 pub fn status(
@@ -248,6 +323,7 @@ pub fn status(
         page,
         reverted,
         skip,
+        take,
     })
 }
 
